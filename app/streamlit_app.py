@@ -2,10 +2,9 @@
 
 Layout: inputs in the sidebar; in the main area a summary row, the map at
 full width with its legend, the weakest-streets table and the scoring notes.
-Each part is one render_* function. To add an indicator to the map, add a
-View to VIEWS (a selector appears in the sidebar once there are two); a
-persona selector and a data-completeness panel go in the sidebar and
-render_summary.
+Each part is one render_* function. To add something the map can show, add
+a View to VIEWS. The selected persona is applied once per run
+(scoring.apply_persona) and everything below works on that copy.
 """
 
 from __future__ import annotations
@@ -22,11 +21,11 @@ from streamlit_folium import st_folium
 
 from walkscope import pipeline
 from walkscope.completeness import completeness
-from walkscope.config import load_indicator_params
+from walkscope.config import Persona, load_indicator_params, load_personas
 from walkscope.fetch import AreaError, ServerBusyError
 from walkscope.mapview import legend_html, make_map
 from walkscope.network import Network
-from walkscope.scoring import area_summary, display_name, length_weighted_mean, weakest
+from walkscope.scoring import apply_persona, area_summary, display_name, length_weighted_mean, weakest
 from walkscope.tags import is_pedestrian_only
 
 log = logging.getLogger(__name__)
@@ -146,6 +145,34 @@ def amenity_popup() -> dict[str, Callable[[pd.DataFrame], pd.Series]]:
             for c in _categories()}
 
 
+INDICATOR_LABELS = {
+    "amenity": "Amenity access",
+    "connectivity": "Connectivity",
+    "infrastructure": "Pedestrian infrastructure",
+    "traffic_stress": "Traffic stress",
+    "transit": "Transit access",
+}
+INDICATOR_SHORT = {
+    "amenity": "amenity",
+    "connectivity": "connectivity",
+    "infrastructure": "infrastructure",
+    "traffic_stress": "traffic",
+    "transit": "transit",
+}
+
+
+def _indicator_line(column: str) -> Callable[[pd.DataFrame], pd.Series]:
+    return lambda seg: seg[column].round().astype(int).astype(str)
+
+
+def weakest_indicator(seg: pd.DataFrame) -> pd.Series:
+    """The lowest of the five indicator scores, e.g. 'Traffic stress 11', or why the segment scores 0."""
+    scores = seg[list(INDICATOR_LABELS)]
+    lowest = scores.idxmin(axis=1)
+    text = lowest.map(INDICATOR_LABELS) + " " + scores.min(axis=1).round().astype(int).astype(str)
+    return text.where(~seg["impassable"], "impassable for this persona (steps)")
+
+
 @dataclass(frozen=True)
 class View:
     column: str                 # score column in the segments table
@@ -156,6 +183,10 @@ class View:
 
 
 VIEWS = [
+    View("score", "Walkability score",
+         popup={**{label: _indicator_line(col) for col, label in INDICATOR_LABELS.items()},
+                "Weakest": weakest_indicator},
+         table={"Weakest indicator": weakest_indicator}),
     View("traffic_stress", "Traffic stress",
          popup={"Speed limit": speed_popup},
          table={"Speed used": speed_used, "Source": speed_source}),
@@ -179,6 +210,11 @@ VIEWS = [
 def pedestrian_only(seg: pd.DataFrame) -> pd.Series:
     allowed = _params()["pedestrian_only_highways"]
     return seg["highway"].map(lambda h: is_pedestrian_only(h, allowed)).astype(bool)
+
+
+@st.cache_resource(show_spinner=False)
+def _personas() -> dict[str, Persona]:
+    return load_personas()
 
 
 @st.cache_resource(show_spinner=False)
@@ -227,7 +263,19 @@ def choose_place(place: str) -> None:
     st.session_state["selected_place"] = place
 
 
-def render_sidebar() -> View:
+def persona_caption(persona: Persona) -> str:
+    """The persona's weights in one short line, plus its infrastructure mix and impassable ways."""
+    weights = " · ".join(f"{INDICATOR_SHORT[k]} {v:g}" for k, v in persona.weights.items())
+    lines = [f"Weights: {weights}"]
+    if set(persona.infrastructure_mix) != {"base"}:
+        mix = ", ".join(f"{k} {v:g} %" for k, v in persona.infrastructure_mix.items())
+        lines.append(f"Infrastructure: {mix}")
+    if persona.impassable_highways:
+        lines.append("Impassable: " + ", ".join(persona.impassable_highways) + " (score 0)")
+    return "  \n".join(lines)
+
+
+def render_sidebar() -> tuple[View, Persona]:
     with st.sidebar:
         st.header("Study area")
         with st.form("place_form", border=False):
@@ -240,29 +288,31 @@ def render_sidebar() -> View:
         for label, place in EXAMPLES.items():
             st.button(label, key=f"example_{label}", on_click=choose_place, args=(place,), width="stretch")
 
-        view = VIEWS[0]
-        if len(VIEWS) > 1:
-            st.divider()
-            i = st.selectbox("Map shows", range(len(VIEWS)), format_func=lambda i: VIEWS[i].label, key="view")
-            view = VIEWS[i]
-        # Persona selector goes here (build step 7).
-    return view
+        st.divider()
+        personas = _personas()
+        key = st.selectbox("Persona", list(personas), format_func=lambda k: personas[k].label, key="persona",
+                           help="Who is walking. Changes the weights of the walkability score and, for some "
+                                "personas, what the infrastructure score includes.")
+        persona = personas[key]
+        st.caption(persona_caption(persona))
+
+        i = st.selectbox("Map shows", range(len(VIEWS)), format_func=lambda i: VIEWS[i].label, key="view")
+    return VIEWS[i], persona
 
 
 def _fmt(value: float, fmt: str) -> str:
     return "–" if pd.isna(value) else format(value, fmt)
 
 
-def render_summary(net: Network, view: View) -> None:
+def render_summary(seg: pd.DataFrame, area_km2: float, view: View) -> None:
     """Area figures, by the rule in docs/method.md ("Area summaries"): length-weighted,
     headline over roads, footways and paths reported separately."""
-    seg = net.segments
     summary = area_summary(seg, view.column, _params()["pedestrian_only_highways"])
     roads = seg[seg["scored"] & ~pedestrian_only(seg)]
     tagged = length_weighted_mean(roads["speed_tagged_share"], roads["length"])
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Area", f"{net.area.area / 1e6:.1f} km²")           # net.area is in metres (UTM)
+    c1.metric("Area", f"{area_km2:.1f} km²")
     c2.metric("Street network", f"{summary.road_km + summary.pedestrian_km:.1f} km",
               help="Length of all scored streets, footways and paths.")
     c3.metric(f"{view.label}, roads", _fmt(summary.road_mean, ".0f"),
@@ -294,8 +344,7 @@ def render_completeness(seg: pd.DataFrame, speed_tagged: float) -> None:
                        "speeds. Not part of the overall figure.")
 
 
-def weakest_table(net: Network, view: View) -> pd.DataFrame:
-    seg = net.segments
+def weakest_table(seg: pd.DataFrame, view: View) -> pd.DataFrame:
     table = weakest(seg, view.column, n=WEAKEST_ROWS)
     rows = seg.loc[table["segment_id"]]
     out = pd.DataFrame({
@@ -308,30 +357,29 @@ def weakest_table(net: Network, view: View) -> pd.DataFrame:
     return out
 
 
-def table_key(place: str, view: View) -> str:
-    return f"weakest|{place}|{view.column}"
+def table_key(place: str, view: View, persona: Persona) -> str:
+    return f"weakest|{place}|{view.column}|{persona.key}"
 
 
-def selected_street(place: str, view: View, table: pd.DataFrame) -> str | None:
-    state = st.session_state.get(table_key(place, view))
+def selected_street(key: str, table: pd.DataFrame) -> str | None:
+    state = st.session_state.get(key)
     rows = state.selection.rows if state is not None else []
     return table["Street"].iloc[rows[0]] if rows and rows[0] < len(table) else None
 
 
-def render_map(net: Network, view: View, street: str | None) -> None:
-    seg = net.segments
+def render_map(seg: pd.DataFrame, area, view: View, street: str | None) -> None:
     highlight = None
     if street:
         names = seg["name"].map(display_name)
         highlight = seg.index[seg["scored"] & (names == street)]
     details = {name: fn(seg) for name, fn in view.popup.items()}
-    m = make_map(seg, view.column, view.label, net.area, details=details, highlight=highlight,
+    m = make_map(seg, view.column, view.label, area, details=details, highlight=highlight,
                  height_px=MAP_HEIGHT)
     st_folium(m, height=MAP_HEIGHT, use_container_width=True, returned_objects=[])
     st.html(legend_html(view.label))
 
 
-def render_weakest(place: str, view: View, table: pd.DataFrame) -> None:
+def render_weakest(key: str, view: View, table: pd.DataFrame) -> None:
     st.subheader("Weakest streets")
     st.caption("Lowest-scoring named streets, one row per street. Click a row to outline the street on the map.")
     st.dataframe(
@@ -340,7 +388,7 @@ def render_weakest(place: str, view: View, table: pd.DataFrame) -> None:
         width="stretch",
         on_select="rerun",
         selection_mode="single-row",
-        key=table_key(place, view),
+        key=key,
         column_config={
             "Street": st.column_config.TextColumn(width="large"),
             "Road type": st.column_config.TextColumn(width="medium"),
@@ -352,13 +400,12 @@ def render_weakest(place: str, view: View, table: pd.DataFrame) -> None:
 def render_about() -> None:
     with st.expander("How is this scored?"):
         st.markdown(
-            "Each street segment gets five indicator scores from 0 (worst) to 100 (best), calculated "
-            "from OpenStreetMap data. Use **Map shows** in the sidebar to colour the streets by one of them: "
-            "traffic stress (speed limit, lanes), pedestrian infrastructure (sidewalks, crossings), "
-            "connectivity (street intersections within 400 m), transit access (walk to the nearest stop "
-            "or rail station) or amenity access (walk to the nearest of six everyday destinations). "
-            "A later version combines "
-            "them into one score, weighted for the selected persona."
+            "Each street segment gets five indicator scores from 0 (worst) to 100 (best), calculated from "
+            "OpenStreetMap data: amenity access, connectivity, pedestrian infrastructure, traffic stress "
+            "and transit access. The walkability score is their weighted average, with the weights of the "
+            "persona chosen in the sidebar; for wheelchair users the infrastructure score also counts kerbs "
+            "and surface and steps score 0, and at night it also counts lighting. Use **Map shows** to "
+            "colour the streets by the walkability score or by one indicator, and click a street for details."
         )
     st.caption("Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, "
                "available under the ODbL.")
@@ -369,7 +416,7 @@ def render_about() -> None:
 def main() -> None:
     st.set_page_config(page_title="WalkScope", page_icon="🚶", layout="wide",
                        initial_sidebar_state="expanded")
-    view = render_sidebar()
+    view, persona = render_sidebar()
     st.title("WalkScope")
     st.caption("Street-by-street walkability from OpenStreetMap.")
 
@@ -396,11 +443,13 @@ def main() -> None:
             st.code(traceback.format_exc())
         return
 
-    st.subheader(place)
-    render_summary(net, view)
-    table = weakest_table(net, view)
-    render_map(net, view, selected_street(place, view, table))
-    render_weakest(place, view, table)
+    seg = apply_persona(net.segments, persona)        # a copy: the cached network is shared
+    st.subheader(f"{place} · {persona.label}")
+    render_summary(seg, net.area.area / 1e6, view)     # net.area is in metres (UTM)
+    key = table_key(place, view, persona)
+    table = weakest_table(seg, view)
+    render_map(seg, net.area, view, selected_street(key, table))
+    render_weakest(key, view, table)
     render_about()
 
 

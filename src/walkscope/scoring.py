@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from walkscope.config import INDICATORS, Persona
+from walkscope.indicators.infrastructure import infrastructure_score
 from walkscope.tags import as_list, is_pedestrian_only, road_classes
 
 
@@ -22,11 +23,31 @@ def score_segments(segments: pd.DataFrame, persona: Persona) -> pd.Series:
     if missing:
         raise KeyError(f"Indicator columns not computed yet: {missing}")
     score = sum(segments[i] * persona.weights[i] for i in INDICATORS) / 100
-    blocked = set(persona.impassable_highways)
-    if blocked:
-        impassable = segments["highway"].map(lambda h: bool(blocked & set(road_classes(h))))
-        score[impassable] = 0.0
+    score[impassable_mask(segments, persona)] = 0.0
     return score.rename("score")
+
+
+def impassable_mask(segments: pd.DataFrame, persona: Persona) -> pd.Series:
+    """Segments whose highway is in the persona's `impassable_highways` (e.g. steps for wheelchair users)."""
+    blocked = set(persona.impassable_highways)
+    if not blocked:
+        return pd.Series(False, index=segments.index)
+    return segments["highway"].map(lambda h: bool(blocked & set(road_classes(h)))).astype(bool)
+
+
+def apply_persona(segments: pd.DataFrame, persona: Persona) -> pd.DataFrame:
+    """Copy of the segments scored for one persona.
+
+    Indicator scores don't depend on the persona and are computed once; this
+    only re-mixes the infrastructure sub-scores with the persona's
+    `infrastructure_mix` and adds the combined `score` and the `impassable`
+    flag. The input is not changed (it may be shared between app sessions).
+    """
+    out = segments.copy()
+    out["infrastructure"] = infrastructure_score(out, persona)
+    out["score"] = score_segments(out, persona)
+    out["impassable"] = impassable_mask(out, persona)
+    return out
 
 
 def display_name(name: object) -> str | None:

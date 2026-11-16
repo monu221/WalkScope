@@ -102,3 +102,36 @@ def test_area_summary_without_roads():
     summary = area_summary(seg, "amenity", PEDESTRIAN)
     assert np.isnan(summary.road_mean)
     assert summary.pedestrian_share == 1
+
+
+
+# --- persona ---------------------------------------------------------------------
+
+from walkscope.scoring import apply_persona  # noqa: E402
+
+
+def test_apply_persona_remixes_infrastructure_and_scores_without_changing_input():
+    seg = pd.DataFrame({
+        "highway": ["residential", "steps"],
+        "amenity": [50.0, 50.0], "connectivity": [50.0, 50.0], "traffic_stress": [50.0, 100.0],
+        "transit": [50.0, 50.0], "infrastructure": [99.0, 99.0],
+        "infra_base": [80.0, 100.0], "infra_kerb": [0.0, 50.0], "infra_surface": [100.0, 50.0],
+        "infra_lit": [0.0, 100.0], "infra_sidewalk": [60.0, 50.0], "infra_crossing": [100.0, 0.0],
+    })
+    before = seg.copy()
+
+    adult = apply_persona(seg, PERSONAS["general_adult"])
+    assert adult["infrastructure"].tolist() == [80, 100]
+    assert not adult["impassable"].any()
+
+    wheel = apply_persona(seg, PERSONAS["wheelchair"])
+    assert wheel["infrastructure"].tolist() == [0.5 * 80 + 0.25 * 0 + 0.25 * 100, 0.5 * 100 + 0.25 * 50 + 0.25 * 50]
+    assert wheel["impassable"].tolist() == [False, True]
+    assert wheel["score"].iloc[1] == 0                                   # steps
+    expected = (20 * 50 + 10 * 50 + 40 * wheel["infrastructure"].iloc[0] + 15 * 50 + 15 * 50) / 100
+    assert wheel["score"].iloc[0] == pytest.approx(expected)
+
+    night = apply_persona(seg, PERSONAS["night"])
+    assert night["infrastructure"].tolist() == [0.6 * 80 + 0.4 * 0, 0.6 * 100 + 0.4 * 100]
+
+    pd.testing.assert_frame_equal(seg, before)                           # input untouched

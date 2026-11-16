@@ -177,22 +177,19 @@ def test_app_scores_a_place(offline):
     at = _run_app("Grid")
     assert not at.exception
     assert not at.error
-    assert at.subheader[0].value == "Grid"
-    # 7 scored segments of 100 m: 3 residential roads (traffic stress 75) and 4 footways.
+    assert at.subheader[0].value == "Grid · General adult"
+    # 7 scored segments of 100 m: 3 residential roads and 4 footways.
     assert at.metric[1].value == "0.7 km"
-    assert at.metric[2].label == "Traffic stress, roads"
-    assert at.metric[2].value == "75"                         # roads only, footways left out
+    assert at.metric[2].label == "Walkability score, roads"   # the combined score is the default view
     assert at.metric[3].value == "57%"                        # footways: 4 of 7 segments by length
     # Data completeness: no sidewalk, lit or maxspeed tags in the fixture.
     labels = [m.label for m in at.metric[4:]]
     assert labels == ["Overall", "Sidewalk known", "Kerb data nearby", "Lighting tagged", "Speed limit tagged"]
     assert at.metric[5].value == "0%" and at.metric[7].value == "0%" and at.metric[8].value == "0%"
     table = at.dataframe[0].value
-    assert list(table.columns) == ["Street", "Road type", "Traffic stress", "Speed used", "Source"]
-    assert table["Street"].tolist() == ["Row 0 Street", "Row 1 Street", "Row 2 Street"]
-    assert table["Traffic stress"].tolist() == [75, 75, 75]
-    assert table["Speed used"].tolist() == ["30 km/h"] * 3           # residential default
-    assert table["Source"].tolist() == ["assumed"] * 3               # no maxspeed in the fixture
+    assert list(table.columns) == ["Street", "Road type", "Walkability score", "Weakest indicator"]
+    assert sorted(table["Street"]) == ["Row 0 Street", "Row 1 Street", "Row 2 Street"]
+    assert table["Weakest indicator"].tolist() == ["Connectivity 0"] * 3   # the grid has no intersections
     assert at.expander[0].label == "How is this scored?"
 
 
@@ -205,7 +202,7 @@ def test_app_example_button_scores_that_place(offline, monkeypatch, area_data):
     assert not at.exception
     assert asked == ["Sternschanze, Hamburg"]
     assert at.sidebar.text_input(key="place_input").value == "Sternschanze, Hamburg"
-    assert at.subheader[0].value == "Sternschanze, Hamburg"
+    assert at.subheader[0].value == "Sternschanze, Hamburg · General adult"
 
 
 def test_app_second_visit_uses_memory(offline, monkeypatch):
@@ -247,11 +244,12 @@ def test_app_map_selector_shows_every_indicator(offline):
     at = _run_app("Grid")
     selector = at.sidebar.selectbox(key="view")
     labels = selector.options                                  # AppTest lists the formatted labels
-    assert labels == ["Traffic stress", "Pedestrian infrastructure", "Connectivity",
+    assert labels == ["Walkability score", "Traffic stress", "Pedestrian infrastructure", "Connectivity",
                       "Transit access", "Amenity access"]
 
     expected = {
         # label: (extra table columns, first column's values, scores)
+        "Traffic stress": (["Speed used", "Source"], ["30 km/h"] * 3, [75, 75, 75]),   # residential default
         "Pedestrian infrastructure": (["Sidewalk", "Crossing within 50 m"],
                                       ["not tagged"] * 3, [30, 30, 70]),
         "Connectivity": (["Intersections within 400 m"], ["0 per km²"] * 3, [0, 0, 0]),
@@ -270,3 +268,29 @@ def test_app_map_selector_shows_every_indicator(offline):
             assert table[label].tolist() == scores
         assert at.metric[2].label == f"{label}, roads"
     assert table["Furthest category"].iloc[0] == "none within 800 m: school, café, doctor"
+
+
+
+def test_app_persona_switch(offline):
+    at = _run_app("Grid")
+    persona = at.sidebar.selectbox(key="persona")
+    assert persona.options == ["General adult", "Wheelchair user", "Child walking to school", "Night-time"]
+    assert "Weights: amenity 30" in at.sidebar.caption[-1].value
+    general = at.metric[2].value
+
+    at.sidebar.selectbox(key="persona").set_value("wheelchair").run()
+    assert not at.exception
+    assert at.subheader[0].value == "Grid · Wheelchair user"
+    caption = at.sidebar.caption[-1].value
+    assert "Infrastructure: base 50 %, kerb 25 %, surface 25 %" in caption
+    assert "Impassable: steps" in caption
+    assert at.metric[2].value != general
+
+    # Infrastructure for wheelchair users: 50 % base + 25 % kerb + 25 % surface (unknown: 50).
+    # Row 0 Street: base 70, lowered kerb nearby (100); the other rows: base 30, no kerb data (50).
+    at.sidebar.selectbox(key="view").set_value(2).run()
+    assert at.dataframe[0].value["Pedestrian infrastructure"].tolist() == [40, 40, 72]
+
+    # Back to the general adult: the cached network was not changed by the wheelchair run.
+    at.sidebar.selectbox(key="persona").set_value("general_adult").run()
+    assert at.dataframe[0].value["Pedestrian infrastructure"].tolist() == [30, 30, 70]
