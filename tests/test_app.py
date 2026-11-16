@@ -399,3 +399,38 @@ def test_app_whatif_shows_placement_errors(offline):
     at.session_state["whatif_error"] = "A crossing needs a road within 50 m. Click on or next to a road."
     at.run()
     assert "needs a road" in at.error[0].value
+
+
+# --- Drawing an area (build step 9) -----------------------------------------------
+# The draw map is a streamlit-folium component, which AppTest can't draw on; the
+# tests put a drawn outline into session state as the Score button would.
+
+def test_app_draw_mode_shows_the_draw_map():
+    at = _app()
+    at.sidebar.radio(key="area_mode").set_value("draw").run()
+    assert not at.exception
+    assert at.subheader[0].value == "Draw a study area"
+    assert at.info[0].value == "Nothing drawn yet."
+    assert "Score drawn area" in at.sidebar.caption[0].value
+    assert len(at.sidebar.text_input) == 0                     # no place box while drawing
+
+
+def test_app_scores_a_drawn_area(offline, monkeypatch, area_data):
+    from walkscope.drawing import drawn_area_name
+
+    monkeypatch.setattr(pipeline, "area_from_place", lambda name: pytest.fail("geocoded a drawn area"))
+    name = drawn_area_name(area_data.area, pipeline.area_km2(area_data.area))
+    at = _app()
+    at.session_state["drawn_areas"] = {name: area_data.area.wkt}
+    at.session_state["selected_place"] = name
+    at.run()
+    assert not at.exception
+    assert at.subheader[0].value == f"{name} · General adult"
+    assert at.metric[1].value == "0.7 km"                       # same grid as the place-name tests
+
+
+def test_app_example_button_leaves_draw_mode(offline):
+    at = _app()
+    at.sidebar.radio(key="area_mode").set_value("draw").run()
+    at.sidebar.button(key="example_Sternschanze").click().run()
+    assert at.sidebar.radio(key="area_mode").value == "place"

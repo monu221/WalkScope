@@ -14,6 +14,7 @@ Each street segment gets five indicator scores from 0 to 100, combined as a weig
 
 ## Study area and measuring point
 
+- The study area is either a **place name**, geocoded to its boundary, or an outline **drawn on the map** (polygon or rectangle; a self-intersecting outline is repaired and its largest part kept). Both are scored the same way and limited to **5 km²**.
 - The OSM data is downloaded for the study area plus a **1,000 m buffer**, so that streets near the edge can reach amenities, stops and rail stations outside it (the furthest reach used is 1,000 m to a rail station). Only segments inside the study area are scored and shown.
 - Distances for a segment are measured from the **network node nearest to the segment midpoint**.
 - Footways, pedestrian streets, paths and steps are scored as segments like any other street. Together they form the *pedestrian-only* class used below.

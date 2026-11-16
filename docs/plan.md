@@ -56,7 +56,8 @@ WalkScope/
 | scoring | `score_segments(segments, persona)` | → `score` column = Σ(indicator × weight) / 100 |
 | scoring | `weakest(segments, n)` | → n lowest-scoring *named* segments |
 | completeness | `completeness(segments)` | → sidewalk %, kerb %, lit %, and their mean |
-| scenario | `add_crossing(state, point)` / `add_amenity(state, point, category)` | → updated segments, rescoring only affected ones |
+| scenario | `add_crossing(net, segments, point, params)` / `add_amenity(...)` / `apply_edits(net, edits, params)` | → updated segments copy and changed ids, rescoring only affected ones |
+| drawing | `draw_map(outline)` / `polygon_from_drawings(drawings)` | → Folium map with draw tools / last drawn polygon (lat/lon) for `score_area` |
 | mapview | `make_map(segments, column)` | → Folium map coloured by score |
 | report | `build_report(...)` / `to_pdf(markdown)` | → Markdown string / PDF bytes |
 

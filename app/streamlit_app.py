@@ -16,13 +16,16 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Callable
 
+import geopandas as gpd
 import pandas as pd
 import streamlit as st
+from shapely import wkt
 from streamlit_folium import st_folium
 
 from walkscope import pipeline
 from walkscope.completeness import Completeness, completeness, persona_gaps
 from walkscope.config import Persona, load_indicator_params, load_personas
+from walkscope.drawing import draw_map, drawn_area_name, polygon_from_drawings
 from walkscope.fetch import AreaError, ServerBusyError
 from walkscope.mapview import colour_range, legend_html, make_map
 from walkscope.network import Network
@@ -51,6 +54,8 @@ TABLE_FOCUS = {"all": "All indicators", "design": "Street design only"}
 WHATIF_MODES = {"off": "Nothing (explore)", CROSSING: "Marked crossing", AMENITY: "Amenity"}
 WHATIF_SHOW = {"after": "After", "before": "Before"}
 CHANGED_ROWS = 10
+AREA_MODES = {"place": "Place name", "draw": "Draw on map"}
+DRAWN_KEY = "drawn_areas"       # session state: drawn-area name -> outline (WKT, lat/lon)
 WEAKEST_ROWS = 15
 CACHED_PLACES = 5
 BUSY_HINT = "Wait a minute, then press **Score area** again. Places you have scored before open instantly."
@@ -238,8 +243,14 @@ def _results() -> OrderedDict[str, Network]:
     return OrderedDict()
 
 
+def drawn_outline(place: str):
+    """Lat/lon outline of a drawn area, or None for a place name."""
+    text = st.session_state.get(DRAWN_KEY, {}).get(place)
+    return wkt.loads(text) if text else None
+
+
 def load(place: str) -> Network:
-    """Scored network for a place, from memory or freshly, showing progress steps."""
+    """Scored network for a place name or drawn area, from memory or freshly, showing progress steps."""
     results = _results()
     if place in results:
         results.move_to_end(place)
@@ -255,7 +266,9 @@ def load(place: str) -> Network:
                 st.write(f"{step}…")
 
             try:
-                net = pipeline.score_place(place, progress=progress)
+                outline = drawn_outline(place)
+                net = (pipeline.score_area(outline, progress=progress) if outline is not None
+                       else pipeline.score_place(place, progress=progress))
             except Exception:
                 status.update(label=f"Could not score {place}", state="error", expanded=False)
                 raise
@@ -276,6 +289,15 @@ def show_error(message: str, hint: str) -> None:
 def choose_place(place: str) -> None:
     st.session_state["place_input"] = place
     st.session_state["selected_place"] = place
+    st.session_state["area_mode"] = "place"
+
+
+def score_drawn(polygon_wkt: str, name: str) -> None:
+    """Button callback: score the drawn outline and show its results."""
+    st.session_state.setdefault(DRAWN_KEY, {})[name] = polygon_wkt
+    st.session_state["selected_place"] = name
+    st.session_state["place_input"] = ""
+    st.session_state["area_mode"] = "place"
 
 
 def persona_caption(persona: Persona) -> str:
@@ -290,14 +312,19 @@ def persona_caption(persona: Persona) -> str:
     return "  \n".join(lines)
 
 
-def render_sidebar() -> tuple[View, Persona, bool]:
+def render_sidebar() -> tuple[View, Persona, bool, bool]:
     with st.sidebar:
         st.header("Study area")
-        with st.form("place_form", border=False):
-            typed = st.text_input("Place", key="place_input", placeholder="e.g. Sternschanze, Hamburg",
-                                  help="A neighbourhood or district, up to 5 km².")
-            if st.form_submit_button("Score area", type="primary", width="stretch") and typed.strip():
-                st.session_state["selected_place"] = typed.strip()
+        mode = st.radio("Choose by", list(AREA_MODES), format_func=AREA_MODES.get, key="area_mode",
+                        horizontal=True, label_visibility="collapsed")
+        if mode == "place":
+            with st.form("place_form", border=False):
+                typed = st.text_input("Place", key="place_input", placeholder="e.g. Sternschanze, Hamburg",
+                                      help="A neighbourhood or district, up to 5 km².")
+                if st.form_submit_button("Score area", type="primary", width="stretch") and typed.strip():
+                    st.session_state["selected_place"] = typed.strip()
+        else:
+            st.caption("Draw a polygon or rectangle on the map, up to 5 km², then press **Score drawn area**.")
 
         st.caption("Examples")
         for label, place in EXAMPLES.items():
@@ -317,7 +344,7 @@ def render_sidebar() -> tuple[View, Persona, bool]:
                          help="Relative stretches the colours over this area's own scores (5th to 95th "
                               "percentile), so the weakest streets here show red. Absolute uses 0–100 for "
                               "every area, for comparing areas.")
-    return VIEWS[i], persona, scale == "relative"
+    return VIEWS[i], persona, scale == "relative", mode == "draw"
 
 
 def _fmt(value: float, fmt: str) -> str:
@@ -467,6 +494,45 @@ def render_weakest(key: str, view: View, table: pd.DataFrame, design_only: bool)
     )
 
 
+# --- Drawing an area -----------------------------------------------------------------
+
+def current_outline():
+    """Lat/lon outline of the last scored area (to open the draw map on it), or None."""
+    place = st.session_state.get("selected_place")
+    net = _results().get(place) if place else None
+    if net is None:
+        return None
+    return gpd.GeoSeries([net.area], crs=net.crs).to_crs(4326).iloc[0]
+
+
+def render_draw() -> None:
+    st.subheader("Draw a study area")
+    st.caption("Use the polygon or rectangle tool at the top left of the map. Up to "
+               f"{_params()['area']['max_km2']:g} km². The dashed outline is the current study area.")
+    m = draw_map(current_outline(), width_px=PAGE_MAX_WIDTH_PX, height_px=MAP_HEIGHT)
+    out = st_folium(m, height=MAP_HEIGHT, use_container_width=True, key="draw_map",
+                    returned_objects=["all_drawings"])
+    render_drawn((out or {}).get("all_drawings"))
+
+
+def render_drawn(drawings) -> None:
+    """Size check and the Score button for the drawn shape."""
+    polygon = polygon_from_drawings(drawings)
+    if polygon is None:
+        st.info("Nothing drawn yet.")
+        return
+    size = pipeline.area_km2(polygon)
+    limit = _params()["area"]["max_km2"]
+    too_big = size > limit
+    c1, c2 = st.columns([1, 2])
+    c1.metric("Drawn area", f"{size:.2f} km²")
+    if too_big:
+        c2.error(f"This area is {size:.1f} km²; WalkScope handles up to {limit:g} km². Draw a smaller one.")
+    name = drawn_area_name(polygon, size)
+    c2.button("Score drawn area", type="primary", disabled=too_big, on_click=score_drawn,
+              args=(polygon.wkt, name))
+
+
 # --- What-if ------------------------------------------------------------------------
 
 def edits_key(place: str) -> str:
@@ -597,9 +663,13 @@ def main() -> None:
     st.set_page_config(page_title="WalkScope", page_icon="🚶", layout="wide",
                        initial_sidebar_state="expanded")
     st.html(PAGE_CSS)
-    view, persona, relative = render_sidebar()
+    view, persona, relative, drawing = render_sidebar()
     st.title("WalkScope")
     st.caption("Street-by-street walkability from OpenStreetMap.")
+    if drawing:
+        render_draw()
+        render_about()
+        return
 
     place = st.session_state.get("selected_place")
     if not place:
