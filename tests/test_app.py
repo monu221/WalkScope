@@ -26,7 +26,7 @@ def test_score_place_adds_traffic_columns(offline):
     seg = net.segments
     assert {"traffic_stress", "speed_kmh", "speed_tagged"} <= set(seg.columns)
     assert seg.loc[seg["highway"] == "footway", "traffic_stress"].eq(100).all()
-    assert seg.loc[seg["highway"] == "residential", "traffic_stress"].eq(30).all()
+    assert seg.loc[seg["highway"] == "residential", "traffic_stress"].eq(75).all()   # default 30 km/h
 
 
 def test_score_place_adds_infrastructure_columns(offline):
@@ -166,12 +166,13 @@ def test_app_scores_a_place(offline):
     assert not at.error
     assert at.subheader[0].value == "Grid"
     assert at.metric[1].value == "7"                          # streets scored
-    assert at.metric[2].value == "70"                         # mean: 4 footways 100, 3 residential 30
+    assert at.metric[2].value == "89"                         # mean: 4 footways 100, 3 residential 75
     table = at.dataframe[0].value
-    assert list(table.columns) == ["Street", "Road type", "Traffic stress", "Speed used"]
+    assert list(table.columns) == ["Street", "Road type", "Traffic stress", "Speed used", "Source"]
     assert table["Street"].tolist() == ["Row 0 Street", "Row 1 Street", "Row 2 Street"]
-    assert table["Traffic stress"].tolist() == [30, 30, 30]
-    assert table["Speed used"].tolist() == ["50 km/h (assumed)"] * 3   # no maxspeed in the fixture
+    assert table["Traffic stress"].tolist() == [75, 75, 75]
+    assert table["Speed used"].tolist() == ["30 km/h"] * 3           # residential default
+    assert table["Source"].tolist() == ["assumed"] * 3               # no maxspeed in the fixture
     assert at.expander[0].label == "How is this scored?"
 
 
@@ -220,3 +221,31 @@ def test_app_shows_unexpected_error_kindly(monkeypatch):
     assert not at.exception
     assert "Something went wrong" in at.error[0].value
     assert at.expander[0].label == "Technical details"
+
+
+def test_app_map_selector_shows_every_indicator(offline):
+    at = _run_app("Grid")
+    selector = at.sidebar.selectbox(key="view")
+    labels = selector.options                                  # AppTest lists the formatted labels
+    assert labels == ["Traffic stress", "Pedestrian infrastructure", "Connectivity",
+                      "Transit access", "Amenity access"]
+
+    expected = {
+        # label: (extra table columns, first column's values, scores)
+        "Pedestrian infrastructure": (["Sidewalk", "Crossing within 50 m"],
+                                      ["not tagged"] * 3, [30, 30, 70]),
+        "Connectivity": (["Intersections within 400 m"], ["0 per km²"] * 3, [0, 0, 0]),
+        "Transit access": (["Nearest stop"], None, None),
+        "Amenity access": (["Not within 800 m"], ["school, café, doctor"] * 3, [50, 50, 50]),
+    }
+    for i, label in enumerate(labels[1:], start=1):
+        at.sidebar.selectbox(key="view").set_value(i).run()
+        assert not at.exception, label
+        table = at.dataframe[0].value
+        extra, first_values, scores = expected[label]
+        assert list(table.columns) == ["Street", "Road type", label, *extra]
+        if first_values is not None:
+            assert table[extra[0]].tolist() == first_values
+            assert table[label].tolist() == scores
+        assert at.metric[2].label == f"Mean {label.lower()}"
+    assert table["Not within 800 m"].iloc[0] == "school, café, doctor"

@@ -44,26 +44,68 @@ FIRST_RUN_NOTE = ("The first run for a place can take a few minutes while map da
 
 
 # --- What the map can show ----------------------------------------------------
+# Each function turns segment columns into short text for the click popup or
+# the weakest-streets table.
+
+def _speed_kmh(seg: pd.DataFrame) -> pd.Series:
+    return seg["speed_kmh"].round().astype(int).astype(str) + " km/h"
+
 
 def speed_popup(seg: pd.DataFrame) -> pd.Series:
     """Speed limit used for traffic stress, and whether it was tagged or assumed."""
-    ped = pedestrian_only(seg)
-    text = seg["speed_kmh"].round().astype(int).astype(str) + " km/h, " + seg["speed_tagged"].map(
-        {True: "tagged in OSM", False: "assumed (no speed limit tagged; German default for the road type)"})
-    return text.where(~ped, "none (no motor traffic)")
+    text = _speed_kmh(seg) + seg["speed_tagged"].map(
+        {True: ", tagged in OSM", False: ", assumed (no speed limit tagged; default for the road type)"})
+    return text.where(~pedestrian_only(seg), "none (no motor traffic)")
 
 
-def speed_table(seg: pd.DataFrame) -> pd.Series:
-    ped = pedestrian_only(seg)
-    text = seg["speed_kmh"].round().astype(int).astype(str) + " km/h" + seg["speed_tagged"].map(
-        {True: "", False: " (assumed)"})
-    return text.where(~ped, "–")
+def speed_used(seg: pd.DataFrame) -> pd.Series:
+    return _speed_kmh(seg).where(~pedestrian_only(seg), "–")
+
+
+def speed_source(seg: pd.DataFrame) -> pd.Series:
+    source = seg["speed_tagged"].map({True: "tagged", False: "assumed"})
+    return source.where(~pedestrian_only(seg), "–")
+
+
+def _for_roads(seg: pd.DataFrame, text: pd.Series) -> pd.Series:
+    return text.where(~pedestrian_only(seg), "– (footway or path)")
+
+
+def sidewalk_text(seg: pd.DataFrame) -> pd.Series:
+    text = seg["infra_sidewalk"].map({100: "both sides", 60: "one side", 50: "not tagged", 0: "none"})
+    return _for_roads(seg, text.fillna(seg["infra_sidewalk"].round().astype(int).astype(str)))
+
+
+def crossing_text(seg: pd.DataFrame) -> pd.Series:
+    text = seg["infra_crossing"].map({100: "marked", 50: "unmarked only", 0: "none"})
+    return _for_roads(seg, text.fillna(seg["infra_crossing"].round().astype(int).astype(str)))
+
+
+def density_text(seg: pd.DataFrame) -> pd.Series:
+    return seg["intersection_density"].round().astype(int).astype(str) + " per km²"
+
+
+def stop_text(seg: pd.DataFrame) -> pd.Series:
+    walk = _params()["walking"]["max_distance_m"]
+    dist = seg["transit_distance_m"]
+    return (dist.round(-1).astype("Int64").astype(str) + " m walk").where(dist.notna(), f"none within {walk} m")
+
+
+CATEGORY_LABELS = {"cafe": "café"}
+
+
+def missing_amenities(seg: pd.DataFrame) -> pd.Series:
+    cats = list(_params()["amenity"]["categories"])
+    reached = seg[[f"amenity_{c}" for c in cats]].to_numpy(dtype=bool)
+    names = [CATEGORY_LABELS.get(c, c) for c in cats]
+    text = [", ".join(n for n, ok in zip(names, row) if not ok) or "none" for row in reached]
+    return pd.Series(text, index=seg.index)
 
 
 @dataclass(frozen=True)
 class View:
     column: str                 # score column in the segments table
-    label: str                  # shown in legend, tooltip and table
+    label: str                  # shown in selector, legend, tooltip and table
     # Extra lines in the click popup and extra table columns: label -> function(segments) -> text.
     popup: dict[str, Callable[[pd.DataFrame], pd.Series]] = field(default_factory=dict)
     table: dict[str, Callable[[pd.DataFrame], pd.Series]] = field(default_factory=dict)
@@ -71,7 +113,20 @@ class View:
 
 VIEWS = [
     View("traffic_stress", "Traffic stress",
-         popup={"Speed limit": speed_popup}, table={"Speed used": speed_table}),
+         popup={"Speed limit": speed_popup},
+         table={"Speed used": speed_used, "Source": speed_source}),
+    View("infrastructure", "Pedestrian infrastructure",
+         popup={"Sidewalk": sidewalk_text, "Crossing within 50 m": crossing_text},
+         table={"Sidewalk": sidewalk_text, "Crossing within 50 m": crossing_text}),
+    View("connectivity", "Connectivity",
+         popup={"Intersections within 400 m": density_text},
+         table={"Intersections within 400 m": density_text}),
+    View("transit", "Transit access",
+         popup={"Nearest stop": stop_text},
+         table={"Nearest stop": stop_text}),
+    View("amenity", "Amenity access",
+         popup={"Not within 800 m": missing_amenities},
+         table={"Not within 800 m": missing_amenities}),
 ]
 
 
@@ -226,12 +281,12 @@ def render_weakest(place: str, view: View, table: pd.DataFrame) -> None:
 def render_about() -> None:
     with st.expander("How is this scored?"):
         st.markdown(
-            "Each street segment gets a score from 0 (worst) to 100 (best), calculated from "
-            "OpenStreetMap data. The map currently shows traffic stress: it falls as the speed limit "
-            "rises (the German default for the road type is assumed where no limit is tagged) and for "
-            "each lane beyond two, while footways and pedestrian streets score 100. Later versions "
-            "combine five indicators (amenities, street connectivity, pedestrian infrastructure, "
-            "traffic stress and transit), weighted for the selected persona."
+            "Each street segment gets five indicator scores from 0 (worst) to 100 (best), calculated "
+            "from OpenStreetMap data. Use **Map shows** in the sidebar to colour the streets by one of them: "
+            "traffic stress (speed limit, lanes), pedestrian infrastructure (sidewalks, crossings), "
+            "connectivity (street intersections within 400 m), transit access (walk to the nearest stop) "
+            "or amenity access (everyday destinations within an 800 m walk). A later version combines "
+            "them into one score, weighted for the selected persona."
         )
     st.caption("Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, "
                "available under the ODbL.")
