@@ -27,6 +27,7 @@ import truststore
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 
+from walkscope import examples
 from walkscope.config import load_indicator_params
 
 # Verify HTTPS against the operating system's certificate store instead of
@@ -275,9 +276,13 @@ class AreaData:
 def area_from_place(name: str) -> BaseGeometry:
     """Geocode a place name to its boundary polygon via Nominatim.
 
-    Network failures are retried and end in ServerBusyError; a place that
+    A bundled example (examples.BUNDLED) uses its stored outline, without
+    calling Nominatim. Network failures are retried and end in ServerBusyError; a place that
     can't be found or isn't an area raises AreaError.
     """
+    stored = examples.bundled_area(name)
+    if stored is not None:
+        return stored
     try:
         gdf = with_retry(lambda: ox.geocode_to_gdf(name), server=None, deadline=Deadline(GEOCODE_BUDGET_S))
     except ServerBusyError:
@@ -431,18 +436,32 @@ def _cache_key(area: BaseGeometry, buffer_m: float, tags: dict[str, Any]) -> str
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+def cache_key(area: BaseGeometry, params: dict[str, Any]) -> str:
+    """Key of the downloaded data for this area and parameters (disk cache and bundled examples)."""
+    return _cache_key(area, params["area"]["buffer_m"], feature_tags(params))
+
+
 def fetch_area(
     area: BaseGeometry,
     params: dict[str, Any] | None = None,
     cache_dir: str | Path | None = None,
 ) -> AreaData:
-    """Return OSM data for the area plus its buffer, from cache if already downloaded."""
+    """Return OSM data for the area plus its buffer.
+
+    From the bundled examples or the disk cache if already downloaded, else
+    from Overpass (then saved to the disk cache).
+    """
     params = params or load_indicator_params()
     cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
     buffer_m = params["area"]["buffer_m"]
     tags = feature_tags(params)
+    key = _cache_key(area, buffer_m, tags)
 
-    path = cache_dir / f"area_{_cache_key(area, buffer_m, tags)}.pkl"
+    bundled = examples.bundled_data(key)
+    if bundled is not None:
+        return bundled
+
+    path = cache_dir / f"area_{key}.pkl"
     if path.exists():
         with open(path, "rb") as f:
             return pickle.load(f)  # our own file, written below

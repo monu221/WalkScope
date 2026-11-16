@@ -456,6 +456,20 @@ def test_app_aachen_example_is_a_drawn_area(monkeypatch, area_data):
     assert miny < 50.7747 < maxy and minx < 6.0839 < maxx          # the Dom is inside
 
 
+@pytest.mark.parametrize("button", ["example_Sternschanze", "example_Iserbrook", "example_Aachen"])
+def test_app_examples_open_from_shipped_data(monkeypatch, button):
+    """The example buttons use data/examples: no geocoding, no download."""
+    def offline(*args, **kwargs):
+        pytest.fail("called the map servers")
+    monkeypatch.setattr(fetch, "_download", offline)
+    monkeypatch.setattr(fetch.ox, "geocode_to_gdf", offline)
+    at = _app()
+    at.sidebar.button(key=button).click().run(timeout=60)
+    assert not at.exception and not at.error
+    note = next(c.value for c in at.caption if c.value.startswith("Example: map data downloaded on"))
+    assert "© [OpenStreetMap]" in note and "ODbL" in note
+
+
 def _persona_caption(at):
     return next(c.value for c in at.sidebar.caption if c.value.startswith("Weights:"))
 

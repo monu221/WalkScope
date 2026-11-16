@@ -7,7 +7,8 @@ Run from the project root:
     .venv/Scripts/python scripts/measure_timing.py --no-limits   # see what the server really needs
 
 Each run downloads fresh: OSMnx's HTTP cache is off and area files go to a
-temporary folder, so data/cache is neither used nor changed. Areas:
+temporary folder, so data/cache is neither used nor changed, and the
+bundled example data (data/examples) is not used either. Areas:
 Sternschanze (place name, geocoded) and the Aachen city-centre square (drawn
 area, no geocoding).
 
@@ -32,7 +33,7 @@ from dataclasses import dataclass
 
 import osmnx as ox
 
-from walkscope import fetch, pipeline
+from walkscope import examples, fetch, pipeline
 from walkscope.config import load_indicator_params
 from walkscope.examples import AACHEN_CENTRE, STERNSCHANZE
 
@@ -161,6 +162,7 @@ def main(argv: list[str] | None = None) -> None:
 
     warnings.filterwarnings("ignore")
     ox.settings.use_cache = False
+    examples.use_bundle = False
     if args.no_limits:
         remove_limits()
     params = load_indicator_params()

@@ -27,7 +27,7 @@ from walkscope import pipeline
 from walkscope.completeness import Completeness, caution_message, completeness
 from walkscope.config import Persona, load_indicator_params, load_personas
 from walkscope.drawing import draw_map, drawn_area_name, polygon_from_drawings
-from walkscope.examples import AACHEN_CENTRE, AACHEN_CENTRE_NAME, ISERBROOK, STERNSCHANZE
+from walkscope.examples import AACHEN_CENTRE, AACHEN_CENTRE_NAME, ISERBROOK, STERNSCHANZE, downloaded_on
 from walkscope.fetch import AreaError, ServerBusyError
 from walkscope.mapview import colour_range, legend_html, make_map
 from walkscope.network import Network
@@ -41,6 +41,7 @@ log = logging.getLogger(__name__)
 
 # One inner-city, one suburban and one Aachen example, all under the 5 km² limit.
 # A value is a place name, or a drawn area (lat/lon polygon) with its display name.
+# Their map data ships with the app (data/examples), so they open without downloading.
 EXAMPLES: dict[str, str | tuple[str, BaseGeometry]] = {
     "Sternschanze (inner city)": STERNSCHANZE,
     "Iserbrook (suburban)": ISERBROOK,
@@ -691,6 +692,10 @@ def main() -> None:
 
     before = apply_persona(net.segments, persona)     # a copy: the cached network is shared
     st.subheader(f"{place} · {persona.label}")
+    bundled = downloaded_on(place)
+    if bundled:
+        st.caption(f"Example: map data downloaded on {bundled} and shipped with the app. "
+                   "Data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, ODbL.")
     render_summary(before, net.area.area / 1e6, view, persona)     # net.area is in metres (UTM)
 
     edits = st.session_state.setdefault(edits_key(place), [])
