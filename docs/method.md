@@ -93,6 +93,14 @@ Persona mix of the infrastructure score:
 | Child walking to school | 100 % | – | – | – |
 | Night-time | 60 % | – | – | 40 % |
 
+Reading the tags:
+
+- **Sidewalk side tags.** If `sidewalk` is missing, the sidewalk is read from `sidewalk:left` and `sidewalk:right`, each falling back to `sidewalk:both`. `yes` / `separate` means a sidewalk on that side, `no` / `none` means none. Both sides → `both` (100), one side → 60, both sides none → 0, otherwise missing (50). In Kreuzberg 262 roads are tagged only `sidewalk:left=no` + `sidewalk:right=separate`; without this rule they would all score the missing 50.
+- **Not crossings.** Nodes tagged `crossing=no` (crossing not possible) or `crossing=informal` (not a designated crossing) don't count as crossings (`ignored_values` in the config). A `highway=crossing` node without a `crossing` tag counts as unmarked.
+- **Several values.** A merged segment with several values (for example `lit=no;yes` or `surface=sett;asphalt`) gets the worst score among them. Values that are not in the config (for example `sidewalk=yes`, `kerb=yes`) are ignored; if no value is known, the missing score applies.
+
+The infrastructure score depends on the persona, but its sub-scores do not; they are stored per segment (`infra_sidewalk`, `infra_crossing`, `infra_kerb`, `infra_surface`, `infra_lit`, `infra_base`) and mixed per persona.
+
 `incline` is dropped for v1.
 
 ### Traffic stress

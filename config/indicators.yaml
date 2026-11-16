@@ -62,9 +62,16 @@ infrastructure:
     right: 60
     "no": 0
     none: 0
+  # Used when `sidewalk` is missing: sidewalk:left / sidewalk:right (each
+  # falling back to sidewalk:both). Both sides present -> both, one side ->
+  # left/right, both absent -> no, otherwise unknown.
+  sidewalk_sides:
+    present: ["yes", separate]
+    absent: ["no", none]
   crossing:
     search_radius_m: 50
     marked_values: [marked, zebra, traffic_signals, uncontrolled]
+    ignored_values: ["no", informal]   # not a crossing: no crossing possible / not designated
     marked_score: 100
     unmarked_score: 50
     none_score: 0

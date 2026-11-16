@@ -128,8 +128,14 @@ def load_indicator_params(path: str | Path | None = None) -> dict[str, Any]:
     if not params["amenity"].get("categories"):
         raise ConfigError("amenity: needs at least one category")
 
-    _check_shares(params["infrastructure"]["base_mix"], ("sidewalk", "crossing"), ("sidewalk", "crossing"),
+    infra = params["infrastructure"]
+    _check_shares(infra["base_mix"], ("sidewalk", "crossing"), ("sidewalk", "crossing"),
                   "infrastructure.base_mix")
+    for key in ("present", "absent"):
+        if not isinstance(infra.get("sidewalk_sides", {}).get(key), list):
+            raise ConfigError(f"infrastructure.sidewalk_sides.{key}: must be a list of tag values")
+    if not isinstance(infra["crossing"].get("ignored_values", []), list):
+        raise ConfigError("infrastructure.crossing.ignored_values: must be a list of tag values")
 
     curve = params["traffic_stress"]["speed_curve"]
     speeds = [p[0] for p in curve]

@@ -29,6 +29,20 @@ def test_score_place_adds_traffic_columns(offline):
     assert seg.loc[seg["highway"] == "residential", "traffic_stress"].eq(30).all()
 
 
+def test_score_place_adds_infrastructure_columns(offline):
+    seg = pipeline.score_place("Grid").segments
+    footway = seg["highway"] == "footway"
+    assert seg.loc[footway, "infrastructure"].eq(100).all()
+    # Row 0 Street (nodes 0-1) has a marked crossing at its midpoint and a lowered
+    # kerb next to it; the other rows have neither. No sidewalk tags -> 50.
+    row0 = seg[(seg["u"].isin([0, 1])) & (seg["v"].isin([0, 1]))].iloc[0]
+    assert row0["infra_crossing"] == 100 and row0["infra_kerb"] == 100
+    assert row0["infrastructure"] == 0.6 * 50 + 0.4 * 100
+    other_rows = seg[~footway & (seg.index != row0.name)]
+    assert other_rows["infra_crossing"].eq(0).all()
+    assert other_rows["infrastructure"].eq(30).all()
+
+
 def test_too_large_area_is_refused(monkeypatch):
     monkeypatch.setattr(pipeline, "area_from_place", lambda name: box(13.0, 52.3, 13.8, 52.7))  # ~Berlin
     with pytest.raises(AreaError, match="up to 5 km²"):
