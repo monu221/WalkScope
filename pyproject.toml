@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Street-by-street walkability scores from OpenStreetMap, per persona."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "osmnx>=2.0",
     "networkx>=3.2",
@@ -19,6 +20,7 @@ dependencies = [
     "streamlit-folium>=0.20",
     "fpdf2>=2.7",
     "pyyaml>=6.0",
+    "truststore>=0.10",
 ]
 
 [project.optional-dependencies]
@@ -29,3 +31,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = ["live: calls the real Nominatim/Overpass APIs (run with: pytest -m live)"]

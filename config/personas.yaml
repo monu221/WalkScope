@@ -2,6 +2,8 @@
 # weights: share of each indicator in the combined score, must sum to 100.
 # infrastructure_mix: how the infrastructure indicator is built for this
 #   persona from the base score and the extra sub-scores, must sum to 100.
+# impassable_highways (optional): highway values whose combined score is
+#   forced to 0 for this persona.
 
 personas:
   general_adult:
@@ -27,6 +29,7 @@ personas:
       base: 50
       kerb: 25
       surface: 25
+    impassable_highways: [steps]
 
   child:
     label: Child walking to school

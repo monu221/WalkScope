@@ -30,6 +30,15 @@ def test_shipped_persona_values_match_method():
     assert personas["wheelchair"].infrastructure_mix == {"base": 50, "kerb": 25, "surface": 25}
     assert personas["night"].infrastructure_mix == {"base": 60, "lit": 40}
     assert personas["child"].weights["traffic_stress"] == 35
+    assert personas["wheelchair"].impassable_highways == ("steps",)
+    assert personas["general_adult"].impassable_highways == ()
+
+
+def test_impassable_highways_must_be_list_of_strings(tmp_path):
+    p = _valid_persona()
+    p["impassable_highways"] = "steps"
+    with pytest.raises(ConfigError, match="impassable_highways"):
+        load_personas(_write(tmp_path, {"personas": {"x": p}}))
 
 
 def _write(tmp_path, data):
@@ -105,7 +114,7 @@ def test_shipped_indicator_params_match_method():
     assert params["infrastructure"]["missing_score"] == 50
     assert params["infrastructure"]["crossing"]["search_radius_m"] == 50
     assert set(params["amenity"]["categories"]) == {"groceries", "school", "pharmacy", "park", "cafe", "doctor"}
-    assert set(params["pedestrian_only_highways"]) == {"footway", "pedestrian"}
+    assert set(params["pedestrian_only_highways"]) == {"footway", "pedestrian", "path", "steps"}
 
 
 def test_yaml_no_values_stay_strings():

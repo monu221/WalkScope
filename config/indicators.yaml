@@ -8,7 +8,7 @@ walking:
   max_distance_m: 800        # 10-minute walk, used for every persona in v1
   speed_kmh: 4.8             # kept for later versions; not used in v1
 
-pedestrian_only_highways: [footway, pedestrian]
+pedestrian_only_highways: [footway, pedestrian, path, steps]
 
 amenity:
   # A category is reached if any matching feature is within walking.max_distance_m.

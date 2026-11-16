@@ -16,7 +16,7 @@ Each street segment gets five indicator scores from 0 to 100, combined as a weig
 
 - The OSM data is downloaded for the study area plus an **800 m buffer**, so that streets near the edge can reach amenities and stops outside it. Only segments inside the study area are scored and shown.
 - Distances for a segment are measured from the **network node nearest to the segment midpoint**.
-- Footways and pedestrian streets are scored as segments like any other street.
+- Footways, pedestrian streets, paths and steps are scored as segments like any other street. Together they form the *pedestrian-only* class used below.
 
 ## Indicator definitions
 
@@ -36,7 +36,7 @@ Each street segment gets five indicator scores from 0 to 100, combined as a weig
 
 Base score:
 
-- Pedestrian-only segments (`highway=footway` or `highway=pedestrian`, list in the config) score **100**.
+- Pedestrian-only segments (`highway=footway`, `pedestrian`, `path` or `steps`; list in the config) score **100**.
 - All other segments: **60 % sidewalk sub-score + 40 % crossing sub-score**.
 
 Sub-scores (values set in the config):
@@ -89,6 +89,8 @@ In v1 the child persona uses this weight row only. Schools get no extra weight.
 ## Combined score
 
 For each segment: score = sum of (indicator score × persona weight) / 100.
+
+**Impassable segments:** for the wheelchair persona, `highway=steps` segments get a combined score of **0**, whatever their indicator scores. This list is set per persona in `config/personas.yaml` (`impassable_highways`).
 
 ## Weakest streets
 

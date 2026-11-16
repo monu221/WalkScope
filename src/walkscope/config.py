@@ -31,6 +31,7 @@ class Persona:
     label: str
     weights: dict[str, float]
     infrastructure_mix: dict[str, float]
+    impassable_highways: tuple[str, ...] = ()
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -81,11 +82,15 @@ def load_personas(path: str | Path | None = None) -> dict[str, Persona]:
         mix = _check_shares(
             spec.get("infrastructure_mix"), INFRASTRUCTURE_PARTS, ("base",), f"{where}.infrastructure_mix"
         )
+        impassable = spec.get("impassable_highways", [])
+        if not isinstance(impassable, list) or not all(isinstance(h, str) for h in impassable):
+            raise ConfigError(f"{where}.impassable_highways: must be a list of highway values")
         personas[key] = Persona(
             key=key,
             label=str(spec.get("label", key)),
             weights=weights,
             infrastructure_mix=mix,
+            impassable_highways=tuple(impassable),
         )
     return personas
 
