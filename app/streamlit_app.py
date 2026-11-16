@@ -30,10 +30,13 @@ from walkscope.tags import is_pedestrian_only
 
 log = logging.getLogger(__name__)
 
+# One inner-city, one suburban and one Aachen example, all under the 5 km² limit.
+# (Aachen's districts are larger than 5 km² or don't resolve to an area; Lichtenbusch,
+# a village on the Belgian border, is the one that does.)
 EXAMPLES = {
-    "St. Pauli": "St. Pauli, Hamburg",
-    "Sternschanze": "Sternschanze, Hamburg",
-    "Burtscheid (Aachen)": "Burtscheid, Aachen",
+    "Sternschanze (inner city)": "Sternschanze, Hamburg",
+    "Iserbrook (suburban)": "Iserbrook, Hamburg",
+    "Lichtenbusch (Aachen)": "Lichtenbusch, Aachen",
 }
 MAP_HEIGHT = 600
 WEAKEST_ROWS = 15
@@ -286,7 +289,8 @@ def render_sidebar() -> tuple[View, Persona]:
 
         st.caption("Examples")
         for label, place in EXAMPLES.items():
-            st.button(label, key=f"example_{label}", on_click=choose_place, args=(place,), width="stretch")
+            st.button(label, key=f"example_{place.split(',')[0]}", on_click=choose_place, args=(place,),
+                      width="stretch")
 
         st.divider()
         personas = _personas()

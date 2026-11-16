@@ -168,7 +168,8 @@ def test_app_start_page():
     assert at.title[0].value == "WalkScope"
     assert "Score area" in at.info[0].value
     assert at.sidebar.button[0].label == "Score area"
-    assert [b.label for b in at.sidebar.button[1:]] == ["St. Pauli", "Sternschanze", "Burtscheid (Aachen)"]
+    assert [b.label for b in at.sidebar.button[1:]] == [
+        "Sternschanze (inner city)", "Iserbrook (suburban)", "Lichtenbusch (Aachen)"]
     assert at.expander[0].label == "How is this scored?"
     assert any("OpenStreetMap" in c.value for c in at.caption)
 
