@@ -20,6 +20,8 @@ import geopandas as gpd
 import pandas as pd
 import streamlit as st
 from shapely import wkt
+from shapely.geometry import box
+from shapely.geometry.base import BaseGeometry
 from streamlit_folium import st_folium
 
 from walkscope import pipeline
@@ -37,12 +39,15 @@ from walkscope.tags import is_pedestrian_only
 log = logging.getLogger(__name__)
 
 # One inner-city, one suburban and one Aachen example, all under the 5 km² limit.
-# (Aachen's districts are larger than 5 km² or don't resolve to an area; Lichtenbusch,
-# a village on the Belgian border, is the one that does.)
-EXAMPLES = {
+# A value is a place name, or a drawn area (lat/lon polygon) with its display name.
+# Aachen's districts are larger than 5 km² or don't resolve to an area, so the
+# Aachen example is a preset drawn area: a 1.5 km² square (about 1.22 x 1.22 km)
+# centred between the Dom (50.7747 N, 6.0839 E) and the Markt.
+AACHEN_CENTRE = box(6.0752, 50.76999, 6.0926, 50.78101)
+EXAMPLES: dict[str, str | tuple[str, BaseGeometry]] = {
     "Sternschanze (inner city)": "Sternschanze, Hamburg",
     "Iserbrook (suburban)": "Iserbrook, Hamburg",
-    "Lichtenbusch (Aachen)": "Lichtenbusch, Aachen",
+    "Aachen city centre": ("Aachen city centre (Dom and Markt, 1.5 km²)", AACHEN_CENTRE),
 }
 MAP_HEIGHT = 650
 PAGE_MAX_WIDTH_PX = 1300
@@ -328,8 +333,12 @@ def render_sidebar() -> tuple[View, Persona, bool, bool]:
 
         st.caption("Examples")
         for label, place in EXAMPLES.items():
-            st.button(label, key=f"example_{place.split(',')[0]}", on_click=choose_place, args=(place,),
-                      width="stretch")
+            if isinstance(place, str):
+                callback, args = choose_place, (place,)
+            else:
+                name, outline = place
+                callback, args = score_drawn, (outline.wkt, name)
+            st.button(label, key=f"example_{label.split()[0]}", on_click=callback, args=args, width="stretch")
 
         st.divider()
         personas = _personas()

@@ -169,7 +169,7 @@ def test_app_start_page():
     assert "Score area" in at.info[0].value
     assert at.sidebar.button[0].label == "Score area"
     assert [b.label for b in at.sidebar.button[1:]] == [
-        "Sternschanze (inner city)", "Iserbrook (suburban)", "Lichtenbusch (Aachen)"]
+        "Sternschanze (inner city)", "Iserbrook (suburban)", "Aachen city centre"]
     assert at.expander[0].label == "How is this scored?"
     assert any("OpenStreetMap" in c.value for c in at.caption)
 
@@ -434,3 +434,23 @@ def test_app_example_button_leaves_draw_mode(offline):
     at.sidebar.radio(key="area_mode").set_value("draw").run()
     at.sidebar.button(key="example_Sternschanze").click().run()
     assert at.sidebar.radio(key="area_mode").value == "place"
+
+
+
+def test_app_aachen_example_is_a_drawn_area(monkeypatch, area_data):
+    """The Aachen button scores its preset outline directly, without geocoding."""
+    scored = []
+    monkeypatch.setattr(pipeline, "area_from_place", lambda name: pytest.fail("geocoded the Aachen preset"))
+
+    def fake_fetch(area, params):
+        scored.append(area)
+        return area_data.__class__(area_data.area, area_data.buffered, area_data.graph, area_data.pois,
+                                   area_data.stops, area_data.street_points)
+    monkeypatch.setattr(pipeline, "fetch_area", fake_fetch)
+    at = _app()
+    at.sidebar.button(key="example_Aachen").click().run()
+    assert not at.exception
+    assert at.subheader[0].value == "Aachen city centre (Dom and Markt, 1.5 km²) · General adult"
+    assert pipeline.area_km2(scored[0]) == pytest.approx(1.5, abs=0.01)
+    minx, miny, maxx, maxy = scored[0].bounds
+    assert miny < 50.7747 < maxy and minx < 6.0839 < maxx          # the Dom is inside
