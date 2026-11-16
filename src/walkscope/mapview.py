@@ -30,6 +30,8 @@ GREY_TILES_CSS = (
 )
 
 HIGHLIGHT_COLOR = "#111111"
+# Added what-if items: kind -> (border colour, fill colour).
+MARKER_STYLES = {"crossing": ("#111111", "#ffffff"), "amenity": ("#111111", "#7b3294")}
 
 
 # "Relative" colour scale: stretch the colours over this percentile range of the
@@ -95,6 +97,7 @@ def make_map(
     height_px: int = 600,
     vmin: float = 0,
     vmax: float = 100,
+    markers: Iterable[tuple[float, float, str, str]] = (),
 ) -> folium.Map:
     """Map of scored segments coloured by `column`, with the study-area outline.
 
@@ -102,7 +105,8 @@ def make_map(
     name, road type, score and the `details` (label -> per-segment text,
     indexed like `segments`). Segments whose id is in `highlight` get a dark
     outline. Colours run from red at `vmin` to blue at `vmax` (see
-    colour_range). The map is framed on the study area (or the segments
+    colour_range). `markers` are (lat, lon, kind, tooltip) of added what-if
+    items, drawn on top. The map is framed on the study area (or the segments
     without one). The legend is not drawn on the map; show `legend_html`.
     """
     seg = segments[segments["scored"]]
@@ -158,6 +162,11 @@ def make_map(
             aliases=["Street", "Road type", label, *detail_fields],
         ),
     ).add_to(m)
+
+    for lat, lon, kind, tip in markers:
+        border, fill = MARKER_STYLES[kind]
+        folium.CircleMarker([lat, lon], radius=8, color=border, weight=2, fill=True, fill_color=fill,
+                            fill_opacity=1, tooltip=tip).add_to(m)
     return m
 
 

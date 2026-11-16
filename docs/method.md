@@ -198,8 +198,12 @@ The function is `mapview.colour_range`.
 
 ## Scenarios
 
-- **Added crossing:** counts as a marked crossing for every segment within **50 m**, so their crossing sub-score is recalculated.
-- **Added amenity:** its category distance is recalculated for every segment that can reach it within **800 m along the network**, and with it their amenity score.
+In the app's **What if…** panel, each click on the map adds one item. Only the affected segments are rescored (`scenario.apply_edits`, about 0.05 s); the downloaded data and the scored network are not changed.
+
+- **Added crossing:** counts as a **marked** crossing for every **road** segment within **50 m** (pedestrian-only segments already score 100 on the base infrastructure score). Their crossing sub-score becomes 100, and their base and infrastructure scores are recalculated. A click with no road within 50 m is refused. Segments that already have a marked crossing nearby don't change.
+- **Added amenity** (one of the six categories): snapped to the nearest graph node, which must be within **100 m** of the click. For every segment that reaches that node within **800 m along the network**, the category distance becomes the shorter of the old and the new one; the category score and the amenity score are recalculated.
+
+Several items can be added; they apply in order, and **Undo last** and **Clear all** remove them. The panel shows the area's road average before and after (by the "Area summaries" rule), the number of segments improved, and the named streets whose score changed (each street's length-weighted mean before and after). The map and the weakest-streets table can show either state; the map colours stay fixed to the *before* scores so the two are comparable. Added items are marked on the map.
 
 ## Data completeness
 

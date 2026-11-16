@@ -191,7 +191,8 @@ def test_app_scores_a_place(offline):
     assert list(table.columns) == ["Street", "Score", "Weakest indicator", "Road type"]
     assert sorted(table["Street"]) == ["Row 0 Street", "Row 1 Street", "Row 2 Street"]
     assert table["Weakest indicator"].tolist() == ["Connectivity 0"] * 3   # the grid has no intersections
-    assert at.expander[0].label == "How is this scored?"
+    assert at.expander[0].label == "What if… add a crossing or an amenity"
+    assert at.expander[-1].label == "How is this scored?"
 
 
 def test_app_example_button_scores_that_place(offline, monkeypatch, area_data):
@@ -337,3 +338,64 @@ def test_app_street_design_toggle(offline):
 
     at.sidebar.selectbox(key="view").set_value(1).run()         # toggle only on the walkability view
     assert len(at.button_group) == 0
+
+
+
+# --- What-if (build step 8) -------------------------------------------------------
+# Map clicks come from the streamlit-folium component, which AppTest can't drive;
+# the tests put edits into session state as a click would.
+
+def _metric(at, label):
+    return next(m for m in at.metric if m.label == label)
+
+
+def test_app_whatif_crossing_before_and_after(offline):
+    from tests.conftest import grid_xy
+    from walkscope.scenario import CROSSING, Edit
+
+    at = _run_app("Grid")
+    assert at.radio(key="whatif_mode").value == "off"
+    assert not any(m.label == "After" for m in at.metric)       # nothing added yet
+
+    at.sidebar.selectbox(key="view").set_value(2).run()          # pedestrian infrastructure
+    at.session_state["edits|Grid"] = [Edit(CROSSING, *grid_xy(0.3, 1))]
+    at.run()
+    assert not at.exception
+    # Roads: 3 x 100 m at 30, 30, 70 -> 43.3; the crossing lifts Row 1 Street from 30 to 70 -> 56.7.
+    assert _metric(at, "Pedestrian infrastructure, roads: before").value == "43.3"
+    after = _metric(at, "After")
+    assert after.value == "56.7" and after.delta == "+13.3"
+    assert _metric(at, "Segments improved").value == "1"
+    changes = at.dataframe[0].value
+    assert changes.to_dict("records") == [{"Street": "Row 1 Street", "Before": 30, "After": 70, "Change": 40}]
+    assert at.subheader[1].value == "Weakest streets (after)"
+    assert at.dataframe[1].value["Score"].tolist() == [30, 70, 70]
+
+    at.button_group(key="whatif_show").set_value("before").run()
+    assert at.dataframe[1].value["Score"].tolist() == [30, 30, 70]
+
+    next(b for b in at.button if b.label == "Undo last").click().run()
+    assert at.session_state["edits|Grid"] == []
+    assert not any(m.label == "After" for m in at.metric)
+
+
+def test_app_whatif_amenity_category(offline):
+    from tests.conftest import grid_xy
+    from walkscope.scenario import AMENITY, Edit
+
+    at = _run_app("Grid")
+    at.radio(key="whatif_mode").set_value("amenity").run()
+    assert at.selectbox(key="whatif_category").options[:2] == ["Groceries", "School"]
+    at.session_state["edits|Grid"] = [Edit(AMENITY, *grid_xy(0, 0), category="school")]
+    at.run()
+    assert not at.exception
+    assert float(_metric(at, "After").delta) > 0
+    assert int(_metric(at, "Segments improved").value) == 7        # every scored segment is within 800 m
+    assert "Amenity: school" in " ".join(c.value for c in at.caption)
+
+
+def test_app_whatif_shows_placement_errors(offline):
+    at = _run_app("Grid")
+    at.session_state["whatif_error"] = "A crossing needs a road within 50 m. Click on or next to a road."
+    at.run()
+    assert "needs a road" in at.error[0].value

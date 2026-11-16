@@ -119,3 +119,13 @@ def test_map_is_framed_on_the_study_area(segs):
     html = m.get_root().render()
     bounds = gpd.GeoSeries([area], crs=segs.crs).to_crs(4326).total_bounds
     assert f"{bounds[1]}" in html and f"{bounds[3]}" in html  # fitBounds uses the area, not the streets
+
+
+
+def test_markers_for_added_items(segs):
+    m = make_map(segs, "traffic_stress", "Traffic stress",
+                 markers=[(53.55, 9.97, "crossing", "Added: Marked crossing"),
+                          (53.56, 9.98, "amenity", "Added: Amenity: school")])
+    circles = [c for c in m._children.values() if isinstance(c, folium.CircleMarker)]
+    assert [c.location for c in circles] == [[53.55, 9.97], [53.56, 9.98]]
+    assert "Added: Amenity: school" in m.get_root().render()

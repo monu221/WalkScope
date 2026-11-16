@@ -26,6 +26,7 @@ from walkscope.config import Persona, load_indicator_params, load_personas
 from walkscope.fetch import AreaError, ServerBusyError
 from walkscope.mapview import colour_range, legend_html, make_map
 from walkscope.network import Network
+from walkscope.scenario import AMENITY, CROSSING, Edit, ScenarioError, apply_edits, check_edit
 from walkscope.scoring import (STREET_DESIGN, apply_persona, area_summary, display_name, length_weighted_mean,
                                weakest)
 from walkscope.tags import is_pedestrian_only
@@ -47,6 +48,9 @@ PAGE_CSS = (f"<style>.block-container, [data-testid='stMainBlockContainer']"
             f"{{max-width:{PAGE_MAX_WIDTH_PX}px;}}</style>")
 COLOUR_SCALES = {"relative": "Relative to this area", "absolute": "Absolute (0–100)"}
 TABLE_FOCUS = {"all": "All indicators", "design": "Street design only"}
+WHATIF_MODES = {"off": "Nothing (explore)", CROSSING: "Marked crossing", AMENITY: "Amenity"}
+WHATIF_SHOW = {"after": "After", "before": "Before"}
+CHANGED_ROWS = 10
 WEAKEST_ROWS = 15
 CACHED_PLACES = 5
 BUSY_HINT = "Wait a minute, then press **Score area** again. Places you have scored before open instantly."
@@ -412,17 +416,23 @@ def selected_street(key: str, table: pd.DataFrame) -> str | None:
     return table["Street"].iloc[rows[0]] if rows and rows[0] < len(table) else None
 
 
-def render_map(seg: pd.DataFrame, area, view: View, street: str | None, relative: bool) -> None:
+def render_map(seg: pd.DataFrame, area, view: View, street: str | None, colours: tuple[float, float],
+               relative: bool, edits: list[Edit], clickable: bool) -> dict | None:
+    """Draw the map; returns the last click {"lat", "lng"} when `clickable` (what-if mode)."""
     highlight = None
     if street:
         names = seg["name"].map(display_name)
         highlight = seg.index[seg["scored"] & (names == street)]
     details = {name: fn(seg) for name, fn in view.popup.items()}
-    vmin, vmax = colour_range(seg.loc[seg["scored"], view.column], relative)
+    vmin, vmax = colours
+    markers = [(e.lat, e.lon, e.kind, f"Added: {e.label()}") for e in edits]
     m = make_map(seg, view.column, view.label, area, details=details, highlight=highlight,
-                 width_px=int(PAGE_MAX_WIDTH_PX * MAP_SHARE), height_px=MAP_HEIGHT, vmin=vmin, vmax=vmax)
-    st_folium(m, height=MAP_HEIGHT, use_container_width=True, returned_objects=[])
+                 width_px=int(PAGE_MAX_WIDTH_PX * MAP_SHARE), height_px=MAP_HEIGHT, vmin=vmin, vmax=vmax,
+                 markers=markers)
+    out = st_folium(m, height=MAP_HEIGHT, use_container_width=True, key="map",
+                    returned_objects=["last_clicked"] if clickable else [])
     st.html(legend_html(view.label, vmin, vmax, relative))
+    return (out or {}).get("last_clicked") if clickable else None
 
 
 def table_focus(view: View) -> bool:
@@ -455,6 +465,116 @@ def render_weakest(key: str, view: View, table: pd.DataFrame, design_only: bool)
             "Road type": st.column_config.TextColumn(width="small"),
         },
     )
+
+
+# --- What-if ------------------------------------------------------------------------
+
+def edits_key(place: str) -> str:
+    return f"edits|{place}"
+
+
+def handle_click(net: Network, place: str, edits: list[Edit], mode: str, click: dict) -> bool:
+    """Add the clicked item unless this click was already handled; True if the page should rerun."""
+    point = (round(click["lat"], 7), round(click["lng"], 7))
+    seen_key = f"last_click|{place}"
+    if st.session_state.get(seen_key) == point:
+        return False
+    st.session_state[seen_key] = point
+    category = st.session_state.get("whatif_category") if mode == AMENITY else None
+    edit = Edit(mode, lon=point[1], lat=point[0], category=category)
+    try:
+        check_edit(net, edits, edit, _params())
+    except ScenarioError as e:
+        st.session_state["whatif_error"] = str(e)
+        return True
+    st.session_state.pop("whatif_error", None)
+    edits.append(edit)
+    return True
+
+
+def undo_edit(place: str) -> None:
+    edits = st.session_state.get(edits_key(place), [])
+    if edits:
+        edits.pop()
+    st.session_state.pop("whatif_error", None)
+
+
+def clear_edits(place: str) -> None:
+    st.session_state[edits_key(place)] = []
+    st.session_state.pop("whatif_error", None)
+
+
+def changed_streets(before: pd.DataFrame, after: pd.DataFrame, changed: pd.Index, column: str) -> pd.DataFrame:
+    """Named streets whose score changed: Street, Before, After, Change (by street: its mean, length-weighted)."""
+    ids = changed.intersection(before.index[before["scored"]])
+    if len(ids) == 0:
+        return pd.DataFrame(columns=["Street", "Before", "After", "Change"])
+    rows = pd.DataFrame({
+        "Street": before.loc[ids, "name"].map(display_name),
+        "length": before.loc[ids, "length"],
+        "Before": before.loc[ids, column],
+        "After": after.loc[ids, column],
+    }).dropna(subset=["Street"])
+    if rows.empty:
+        return pd.DataFrame(columns=["Street", "Before", "After", "Change"])
+    by_street = rows.groupby("Street").apply(
+        lambda g: pd.Series({"Before": length_weighted_mean(g["Before"], g["length"]),
+                             "After": length_weighted_mean(g["After"], g["length"])}),
+        include_groups=False).reset_index()
+    by_street["Change"] = by_street["After"] - by_street["Before"]
+    by_street = by_street[by_street["Change"].round() != 0].sort_values("Change", ascending=False)
+    return by_street.head(CHANGED_ROWS).round().astype({"Before": int, "After": int, "Change": int})
+
+
+def render_whatif(net: Network, place: str, before: pd.DataFrame, persona: Persona, view: View,
+                  edits: list[Edit]) -> tuple[str, str, pd.DataFrame]:
+    """The what-if panel. Returns (click mode, "before"/"after", segments the map and table show)."""
+    with st.expander("What if… add a crossing or an amenity", expanded=bool(edits)):
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            mode = st.radio("Click on the map to add", list(WHATIF_MODES), format_func=WHATIF_MODES.get,
+                            key="whatif_mode", horizontal=True,
+                            help="A crossing counts as a marked crossing for every road within 50 m. "
+                                 "An amenity counts for every street within an 800 m walk.")
+        with c2:
+            if mode == AMENITY:
+                st.selectbox("Amenity type", list(_params()["amenity"]["categories"]), key="whatif_category",
+                             format_func=lambda c: c.capitalize())
+        if mode != "off":
+            st.caption("Click on the map where you want to add it. Each click adds one.")
+        if error := st.session_state.get("whatif_error"):
+            st.error(error)
+        if not edits:
+            return mode, "before", before
+
+        after_raw, changed = apply_edits(net, edits, _params())
+        after = apply_persona(after_raw, persona)
+        b1, b2 = st.columns([3, 2])
+        b1.caption("Added: " + "; ".join(e.label() for e in edits))
+        u, c = b2.columns(2)
+        u.button("Undo last", on_click=undo_edit, args=(place,), width="stretch")
+        c.button("Clear all", on_click=clear_edits, args=(place,), width="stretch")
+
+        pmask = pedestrian_only(before)
+        sb = area_summary(before, view.column, _params()["pedestrian_only_highways"])
+        sa = area_summary(after, view.column, _params()["pedestrian_only_highways"])
+        scored = changed.intersection(before.index[before["scored"]])
+        improved = scored[(after.loc[scored, view.column] - before.loc[scored, view.column]) > 0.5]
+        m1, m2, m3 = st.columns(3)
+        m1.metric(f"{view.label}, roads: before", _fmt(sb.road_mean, ".1f"))
+        m2.metric("After", _fmt(sa.road_mean, ".1f"), delta=_fmt(sa.road_mean - sb.road_mean, "+.1f"))
+        m3.metric("Segments improved", f"{len(improved)}",
+                  help=f"{before.loc[improved, 'length'].sum() / 1000:.1f} km, of which "
+                       f"{int((~pmask.loc[improved]).sum())} on roads.")
+        table = changed_streets(before, after, changed, view.column)
+        if table.empty:
+            st.caption(f"No named street's {view.label.lower()} changed.")
+        else:
+            st.dataframe(table, hide_index=True, width="stretch",
+                         column_config={"Change": st.column_config.NumberColumn(format="%+d")})
+        shown = st.segmented_control("Map and table show", list(WHATIF_SHOW), format_func=WHATIF_SHOW.get,
+                                     default="after", key="whatif_show") or "after"
+    return mode, shown, after if shown == "after" else before
 
 
 def render_about() -> None:
@@ -504,20 +624,28 @@ def main() -> None:
             st.code(traceback.format_exc())
         return
 
-    seg = apply_persona(net.segments, persona)        # a copy: the cached network is shared
+    before = apply_persona(net.segments, persona)     # a copy: the cached network is shared
     st.subheader(f"{place} · {persona.label}")
-    render_summary(seg, net.area.area / 1e6, view, persona)     # net.area is in metres (UTM)
+    render_summary(before, net.area.area / 1e6, view, persona)     # net.area is in metres (UTM)
+
+    edits = st.session_state.setdefault(edits_key(place), [])
+    mode, shown, seg = render_whatif(net, place, before, persona, view, edits)
+    # Colours fixed by the actual (before) scores, so before and after are comparable.
+    colours = colour_range(before.loc[before["scored"], view.column], relative)
 
     map_col, table_col = st.columns([MAP_SHARE, 1 - MAP_SHARE], gap="medium")
     with table_col:
-        st.subheader("Weakest streets")
+        st.subheader("Weakest streets" + (" (after)" if shown == "after" else ""))
         design_only = table_focus(view)
-        key = table_key(place, view, persona, design_only)
+        key = table_key(place, view, persona, design_only) + f"|{shown}|{len(edits)}"
         table = weakest_table(seg, view, design_only)
     with map_col:
-        render_map(seg, net.area, view, selected_street(key, table), relative)
+        click = render_map(seg, net.area, view, selected_street(key, table), colours, relative,
+                           edits, clickable=mode != "off")
     with table_col:
         render_weakest(key, view, table, design_only)
+    if click and handle_click(net, place, edits, mode, click):
+        st.rerun()
     render_about()
 
 
