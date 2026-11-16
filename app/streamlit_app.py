@@ -20,7 +20,6 @@ import geopandas as gpd
 import pandas as pd
 import streamlit as st
 from shapely import wkt
-from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 from streamlit_folium import st_folium
 
@@ -28,6 +27,7 @@ from walkscope import pipeline
 from walkscope.completeness import Completeness, caution_message, completeness
 from walkscope.config import Persona, load_indicator_params, load_personas
 from walkscope.drawing import draw_map, drawn_area_name, polygon_from_drawings
+from walkscope.examples import AACHEN_CENTRE, AACHEN_CENTRE_NAME, ISERBROOK, STERNSCHANZE
 from walkscope.fetch import AreaError, ServerBusyError
 from walkscope.mapview import colour_range, legend_html, make_map
 from walkscope.network import Network
@@ -41,14 +41,10 @@ log = logging.getLogger(__name__)
 
 # One inner-city, one suburban and one Aachen example, all under the 5 km² limit.
 # A value is a place name, or a drawn area (lat/lon polygon) with its display name.
-# Aachen's districts are larger than 5 km² or don't resolve to an area, so the
-# Aachen example is a preset drawn area: a 1.5 km² square (about 1.22 x 1.22 km)
-# centred between the Dom (50.7747 N, 6.0839 E) and the Markt.
-AACHEN_CENTRE = box(6.0752, 50.76999, 6.0926, 50.78101)
 EXAMPLES: dict[str, str | tuple[str, BaseGeometry]] = {
-    "Sternschanze (inner city)": "Sternschanze, Hamburg",
-    "Iserbrook (suburban)": "Iserbrook, Hamburg",
-    "Aachen city centre": ("Aachen city centre (Dom and Markt, 1.5 km²)", AACHEN_CENTRE),
+    "Sternschanze (inner city)": STERNSCHANZE,
+    "Iserbrook (suburban)": ISERBROOK,
+    "Aachen city centre": (AACHEN_CENTRE_NAME, AACHEN_CENTRE),   # a preset drawn area
 }
 MAP_HEIGHT = 650
 PAGE_MAX_WIDTH_PX = 1300
