@@ -12,6 +12,7 @@ import logging
 import os
 import pickle
 import time
+import types
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -123,6 +124,21 @@ OVERPASS_URL_ENV = "WALKSCOPE_OVERPASS_URL"
 TRIES = 3
 FIRST_WAIT_S = 5          # wait before the 2nd try; doubles before each further try
 
+# Limits on waiting, so a busy or silent server ends in the busy message within
+# a few minutes (docs/plan.md, "Download robustness"). Before, each request
+# waited up to OSMnx's 180 s, three times, and OSMnx itself also pauses
+# without limit: before each request while the server's status endpoint says
+# all slots are taken, and for 55 s before re-sending after a 429 or 504 reply.
+REQUEST_TIMEOUT_S = 60    # one HTTP request; also the Overpass query's own [timeout:]
+DOWNLOAD_BUDGET_S = 150   # everything for one area download (graph + features): tries, pauses, timeouts
+GEOCODE_BUDGET_S = 45     # the same for finding a place name
+MIN_TRY_S = 10            # don't start a try (or an OSMnx pause) with less time than this left
+
+# Fixed in the query so it doesn't change when a late try gets a shorter client
+# timeout (the query text is also OSMnx's HTTP cache key).
+ox.settings.requests_timeout = REQUEST_TIMEOUT_S
+ox.settings.overpass_settings = f"[out:json][timeout:{REQUEST_TIMEOUT_S}]{{maxsize}}"
+
 BUSY_MESSAGE = "The map data server is busy. Please try again in a minute."
 
 # Errors worth retrying: HTTP error status (502/504/429 when a server is at
@@ -130,6 +146,44 @@ BUSY_MESSAGE = "The map data server is busy. Please try again in a minute."
 RETRYABLE_ERRORS = (ox._errors.ResponseStatusCodeError, requests.exceptions.RequestException)
 
 _sleep = time.sleep       # replaced in tests
+_clock = time.monotonic   # replaced in tests
+
+
+class Deadline:
+    """A point in time after which no more waiting is allowed."""
+
+    def __init__(self, seconds: float):
+        self.end = _clock() + seconds
+
+    def remaining(self) -> float:
+        return self.end - _clock()
+
+
+class OutOfTime(Exception):
+    """An OSMnx pause would run past the deadline."""
+
+
+@contextmanager
+def _limit_waits(deadline: Deadline) -> Iterator[None]:
+    """Inside the block, OSMnx's own pauses raise OutOfTime instead of running past the deadline,
+    and each HTTP request may take at most the time left (and at most REQUEST_TIMEOUT_S)."""
+    def sleep(seconds: float) -> None:
+        if seconds > deadline.remaining() - MIN_TRY_S:
+            raise OutOfTime(f"OSMnx wanted to pause {seconds:.0f} s with {deadline.remaining():.0f} s left")
+        _sleep(seconds)
+
+    modules = (ox._overpass, ox._nominatim)
+    old_time = [m.time for m in modules]
+    old_timeout = ox.settings.requests_timeout
+    for m in modules:
+        m.time = types.SimpleNamespace(sleep=sleep)      # they only call time.sleep
+    ox.settings.requests_timeout = max(1.0, min(REQUEST_TIMEOUT_S, deadline.remaining()))
+    try:
+        yield
+    finally:
+        for m, t in zip(modules, old_time):
+            m.time = t
+        ox.settings.requests_timeout = old_timeout
 
 
 class ServerBusyError(RuntimeError):
@@ -166,24 +220,39 @@ def with_retry(
     server: str | None,
     tries: int = TRIES,
     first_wait_s: float = FIRST_WAIT_S,
+    deadline: Deadline | None = None,
 ) -> T:
-    """Call `fn` against one server, retrying with exponential backoff.
+    """Call `fn` against one server, retrying with exponential backoff, until `deadline`.
 
     `server` is an Overpass URL, or None to leave OSMnx's settings alone (for
-    Nominatim). Raises ServerBusyError if every try fails with a retryable
-    error. Other errors (e.g. "no data in this area") are raised immediately.
+    Nominatim). `deadline` defaults to DOWNLOAD_BUDGET_S from now; no try or
+    wait (ours or OSMnx's) runs past it. Raises ServerBusyError if every try
+    fails with a retryable error or time runs out. Other errors (e.g. "no data
+    in this area") are raised immediately.
     """
+    deadline = deadline or Deadline(DOWNLOAD_BUDGET_S)
     attempts: list[str] = []
     wait = first_wait_s
+    name = server or "default server"
     for i in range(tries):
+        if deadline.remaining() < MIN_TRY_S:
+            attempts.append(f"{name}: out of time before try {i + 1}")
+            break
         try:
-            with _use_overpass_server(server):
+            with _use_overpass_server(server), _limit_waits(deadline):
                 return fn()
+        except OutOfTime as e:
+            attempts.append(f"{name} try {i + 1}: {e}")
+            log.warning(attempts[-1])
+            break
         except RETRYABLE_ERRORS as e:
-            line = f"{server or 'default server'} try {i + 1}: {type(e).__name__}: {str(e)[:200]}"
+            line = f"{name} try {i + 1}: {type(e).__name__}: {str(e)[:200]}"
             attempts.append(line)
             log.warning(line)
             if i < tries - 1:
+                if wait > deadline.remaining() - MIN_TRY_S:
+                    attempts.append(f"{name}: out of time for try {i + 2}")
+                    break
                 _sleep(wait)
                 wait *= 2
     raise ServerBusyError(attempts)
@@ -210,7 +279,7 @@ def area_from_place(name: str) -> BaseGeometry:
     can't be found or isn't an area raises AreaError.
     """
     try:
-        gdf = with_retry(lambda: ox.geocode_to_gdf(name), server=None)
+        gdf = with_retry(lambda: ox.geocode_to_gdf(name), server=None, deadline=Deadline(GEOCODE_BUDGET_S))
     except ServerBusyError:
         raise
     except Exception as e:  # OSMnx raises several types for "not found" / "not a polygon"
@@ -260,10 +329,11 @@ def feature_tags(params: dict[str, Any]) -> dict[str, Any]:
 def _download(buffered: BaseGeometry, tags: dict[str, Any]) -> tuple[nx.MultiDiGraph, gpd.GeoDataFrame]:
     """Fetch the walking graph and the features. The only function that hits Overpass.
 
-    Each of the two requests is retried with backoff; ServerBusyError if all
-    tries fail.
+    Each of the two requests is retried with backoff, within one shared
+    DOWNLOAD_BUDGET_S; ServerBusyError if all tries fail or time runs out.
     """
     server = overpass_url()
+    deadline = Deadline(DOWNLOAD_BUDGET_S)
 
     def get_graph() -> nx.MultiDiGraph:
         defaults = list(ox.settings.useful_tags_way)
@@ -283,11 +353,11 @@ def _download(buffered: BaseGeometry, tags: dict[str, Any]) -> tuple[nx.MultiDiG
             return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
 
     try:
-        graph = with_retry(get_graph, server)
+        graph = with_retry(get_graph, server, deadline=deadline)
     except ox._errors.InsufficientResponseError as e:
         raise AreaError("No walkable streets found in this area.",
                         hint="Check that the place is a town or neighbourhood, not a lake or forest.") from e
-    features = with_retry(get_features, server)
+    features = with_retry(get_features, server, deadline=deadline)
     return graph, features
 
 

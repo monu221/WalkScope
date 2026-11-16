@@ -1,6 +1,8 @@
 import copy
+import time
 
 import geopandas as gpd
+import networkx as nx
 import osmnx as ox
 import pytest
 import requests
@@ -264,3 +266,101 @@ def test_simplify_with_way_parts_keeps_each_ways_speed_and_length():
     assert sorted(data["way_parts"]) == [("residential", "30", 40.0), ("residential", "30", 50.0),
                                          ("residential", "30", 50.0), ("residential", "30", 60.0),
                                          ("residential", "50", 25.0)]
+
+
+# --- waiting limits (build step 11) --------------------------------------------------
+
+@pytest.fixture
+def clock(monkeypatch):
+    """Fake time: sleeping (ours or OSMnx's) advances it; `now["t"] += x` simulates slow requests."""
+    now = {"t": 0.0}
+    slept = []
+
+    def sleep(s):
+        slept.append(s)
+        now["t"] += s
+    monkeypatch.setattr(fetch, "_clock", lambda: now["t"])
+    monkeypatch.setattr(fetch, "_sleep", sleep)
+    now["slept"] = slept
+    return now
+
+
+def test_request_timeout_and_query_timeout_are_60_s():
+    assert fetch.REQUEST_TIMEOUT_S == 60
+    assert ox.settings.requests_timeout == 60
+    assert "[timeout:60]" in ox.settings.overpass_settings
+
+
+def test_silent_server_gives_busy_within_the_budget(clock):
+    """Each try hangs for the full request timeout: the old settings needed 3 x 180 + 15 = 555 s."""
+    timeouts = []
+
+    def hang():
+        timeouts.append(ox.settings.requests_timeout)
+        clock["t"] += ox.settings.requests_timeout
+        raise requests.exceptions.ReadTimeout("read timed out")
+
+    with pytest.raises(ServerBusyError) as err:
+        with_retry(hang, "https://a/api")
+    assert clock["t"] <= fetch.DOWNLOAD_BUDGET_S
+    # 60 s, wait 5, 60 s, wait 10, and the last try gets the 15 s left: busy at exactly 150 s.
+    assert timeouts == [60, 60, 15] and clock["t"] == 150
+    assert len(err.value.attempts) == 3
+
+
+def test_last_try_gets_only_the_time_left(clock):
+    timeouts = []
+
+    def slow_then_fail():
+        timeouts.append(ox.settings.requests_timeout)
+        clock["t"] += 40
+        raise requests.exceptions.ConnectionError("reset")
+
+    with pytest.raises(ServerBusyError):
+        with_retry(slow_then_fail, "https://a/api", deadline=fetch.Deadline(100))
+    assert timeouts == [60, 55]                     # 100 - 40 - 5 = 55 s left for try 2
+    assert ox.settings.requests_timeout == 60       # restored
+
+
+def test_osmnx_pause_past_the_deadline_ends_in_busy(clock):
+    """OSMnx sleeps 55 s and re-sends after a 504, without limit; the deadline stops that."""
+    def osmnx_loop():
+        while True:
+            ox._overpass.time.sleep(55)
+
+    with pytest.raises(ServerBusyError) as err:
+        with_retry(osmnx_loop, "https://a/api", deadline=fetch.Deadline(150))
+    assert clock["slept"] == [55, 55]               # a third pause would end past 150 - 10
+    assert "OSMnx wanted to pause" in err.value.attempts[-1]
+    assert ox._overpass.time is time                # restored
+
+
+def test_fast_failures_still_get_three_tries(clock):
+    def refuse():
+        raise busy()                                # a 502 comes back at once
+
+    with pytest.raises(ServerBusyError) as err:
+        with_retry(refuse, "https://a/api")
+    assert len(err.value.attempts) == 3 and clock["slept"] == [5, 10]
+
+
+def test_graph_and_features_share_one_budget(monkeypatch, clock):
+    def slow_graph(*a, **k):
+        clock["t"] += 145                           # succeeds, but uses nearly all of the budget
+        raise ox._errors.InsufficientResponseError("none")
+    calls = []
+
+    def features(*a, **k):
+        calls.append(1)
+        return None
+    monkeypatch.setattr(fetch.ox, "graph_from_polygon", slow_graph)
+    monkeypatch.setattr(fetch.ox, "features_from_polygon", features)
+    with pytest.raises(AreaError):                  # the graph call's own error still surfaces
+        fetch._download(None, {})
+
+    monkeypatch.setattr(fetch.ox, "graph_from_polygon", lambda *a, **k: (clock.__setitem__("t", clock["t"] + 145)
+                                                                       or nx.MultiDiGraph()))
+    monkeypatch.setattr(fetch, "simplify_with_way_parts", lambda g: g)
+    with pytest.raises(ServerBusyError):            # 5 s left: no time for the features request
+        fetch._download(None, {})
+    assert calls == []

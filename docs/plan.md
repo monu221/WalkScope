@@ -85,8 +85,8 @@ Done:
 - The Overpass server is set by `WALKSCOPE_OVERPASS_URL` (default `https://overpass-api.de/api`).
 - Each request (geocoding, street graph, features) gets 3 tries with 5 s and 10 s waits between them.
 - If every try fails, `ServerBusyError` is raised, which the app shows as "The map data server is busy. Please try again in a minute."
+- **Waiting limits** (build step 11). Each HTTP request times out after **60 s** (was OSMnx's 180 s; the Overpass query's own `[timeout:]` is 60 too). All tries, our pauses and OSMnx's own pauses for one area download (graph and features together) share a **150 s budget**, and finding a place name has **45 s**. OSMnx pauses on its own before each request while the server's status says all slots are taken, and for 55 s before re-sending after a 429 or 504 reply, with no limit; inside the budget such a pause raises instead of running past it. A try only starts with at least 10 s left, and the last one gets only the time left. Worst case before the busy message: about 3 minutes for a place name (45 + 150 s), 2.5 minutes for a drawn area; before, at least 3 × 180 + 15 = 555 s (about 9 minutes), and unbounded while the server kept answering 504.
 
 Possible later improvements:
 - **Fallback server.** A second public Overpass server for when the main one stays busy. Before relying on one, check that it returns the same data as the main server. Tested so far: `overpass.private.coffee` timed out repeatedly (3 × 180 s) on the Aachen test area, and `maps.mail.ru` was not tested. The code would only need to loop `with_retry` over a list of servers.
-- **Shorter request timeout.** OSMnx waits up to 180 s per try (`ox.settings.requests_timeout`), so the worst case before the busy message is about 9 minutes.
 - **Own Overpass instance.** For heavy use or the validation runs, point `WALKSCOPE_OVERPASS_URL` at a local Overpass server.
