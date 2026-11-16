@@ -9,7 +9,7 @@ from shapely.geometry.base import BaseGeometry
 
 from walkscope.config import load_indicator_params, load_personas
 from walkscope.fetch import AreaError, area_from_place, fetch_area
-from walkscope.indicators.amenity import amenities_reached, amenity_score
+from walkscope.indicators.amenity import amenity_distances, amenity_score, category_scores
 from walkscope.indicators.connectivity import connectivity_score, intersection_density
 from walkscope.indicators.infrastructure import (
     infrastructure_score,
@@ -17,7 +17,7 @@ from walkscope.indicators.infrastructure import (
     split_street_points,
 )
 from walkscope.indicators.traffic import effective_speed, traffic_score
-from walkscope.indicators.transit import distance_score, stop_distance
+from walkscope.indicators.transit import stop_distances, transit_score
 from walkscope.network import Network, build_network
 
 # Persona whose infrastructure mix fills the `infrastructure` column until the
@@ -50,9 +50,9 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None,
     `speed_kmh`, `speed_tagged`; `infrastructure` (general-adult mix) and its
     sub-scores `infra_sidewalk`, `infra_crossing`, `infra_kerb`,
     `infra_surface`, `infra_lit`, `infra_base`; `connectivity` and
-    `intersection_density` (per km²); `transit` and `transit_distance_m`
-    (NaN if no stop within reach); `amenity` and one boolean column per
-    category, `amenity_<category>`.
+    `intersection_density` (per km²); `transit`, `transit_distance_m` (any
+    stop) and `station_distance_m` (rail station), NaN beyond reach; `amenity`, and per category its score
+    `amenity_<category>` and distance `amenity_<category>_m` (NaN beyond reach).
     `progress` is called with STEP_DOWNLOAD and STEP_SCORE as each starts.
     Raises AreaError (too large, no streets) or fetch.ServerBusyError.
     """
@@ -86,12 +86,15 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None,
     seg["intersection_density"] = intersection_density(net.nodes, seg, params)
     seg["connectivity"] = connectivity_score(net.nodes, seg, params)
 
-    seg["transit_distance_m"] = stop_distance(net.graph, net.nodes, seg, net.stops, params)
-    seg["transit"] = distance_score(seg["transit_distance_m"], params)
+    stop_dist = stop_distances(net.graph, net.nodes, seg, net.stops, params)
+    seg[stop_dist.columns] = stop_dist
+    seg["transit"] = transit_score(stop_dist, params)
 
-    reached = amenities_reached(net.graph, net.nodes, seg, net.pois, params)
-    seg[reached.columns] = reached
-    seg["amenity"] = amenity_score(reached)
+    distances = amenity_distances(net.graph, net.nodes, seg, net.pois, params)
+    scores = category_scores(distances, params)
+    seg[distances.columns] = distances
+    seg[scores.columns] = scores
+    seg["amenity"] = amenity_score(scores)
     return net
 
 

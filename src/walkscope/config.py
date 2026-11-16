@@ -123,9 +123,15 @@ def load_indicator_params(path: str | Path | None = None) -> dict[str, Any]:
     if not isinstance(conn.get("count_pedestrian_only"), bool):
         raise ConfigError("connectivity.count_pedestrian_only: must be true or false")
 
-    transit = params["transit"]
-    if not transit["full_score_m"] < transit["zero_score_m"]:
-        raise ConfigError("transit: full_score_m must be below zero_score_m")
+    amenity = params["amenity"]
+    if not amenity["full_score_m"] < amenity["zero_score_m"]:
+        raise ConfigError("amenity: full_score_m must be below zero_score_m")
+    for kind in ("stop", "rail_station"):
+        reach = params["transit"].get(kind, {})
+        if not reach.get("full_score_m", 0) < reach.get("zero_score_m", 0):
+            raise ConfigError(f"transit.{kind}: needs full_score_m below zero_score_m")
+    if not isinstance(params["transit"].get("rail_station_tags"), dict):
+        raise ConfigError("transit.rail_station_tags: needs a mapping of tag to values")
 
     if not params["amenity"].get("categories"):
         raise ConfigError("amenity: needs at least one category")

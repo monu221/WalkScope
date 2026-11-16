@@ -6,11 +6,11 @@ Each street segment gets five indicator scores from 0 to 100, combined as a weig
 
 | Indicator | What it measures | Data (all from OpenStreetMap) |
 | --- | --- | --- |
-| Amenity access | How many everyday categories (groceries, school, pharmacy, park, café, doctor) are within a 10-minute walk along the network | Points of interest and the walking network |
+| Amenity access | How close the nearest of each everyday category (groceries, school, pharmacy, park, café, doctor) is along the walking network | Points of interest and the walking network |
 | Connectivity | Intersection density within 400 m; short blocks score higher | Walking network |
 | Pedestrian infrastructure | Sidewalk present, marked crossings nearby, pedestrian-only street | `sidewalk`, `crossing`, `highway=footway/pedestrian` tags |
 | Traffic stress | Speed limit, road class (as a stand-in for traffic volume) and lanes; a residential street scores above a main road at the same speed | `highway`, `maxspeed`, `lanes` tags |
-| Transit access | Walking distance to the nearest bus or rail stop | `public_transport` and `railway` tags |
+| Transit access | Walking distance to the nearest stop, with rail, U-Bahn and S-Bahn stations reaching further | `highway`, `public_transport` and `railway` tags |
 
 ## Study area and measuring point
 
@@ -58,8 +58,10 @@ Of the 1,399 roads (non-pedestrian segments) in the area before driveways and pa
 ### Amenity access
 
 - Six categories: groceries, school, pharmacy, park, café, doctor. The OSM tags for each category are listed in the config.
-- A category counts as reached if at least one of its points lies within **800 m along the walking network**. In v1 this applies to every persona. A walk speed is kept in the config for later versions, but it is not used yet.
-- Score = categories reached ÷ 6 × 100.
+- For each category, the walking distance along the network to its nearest point. The category scores **100 within 200 m**, falling linearly to **0 at 800 m** (a 10-minute walk). In v1 this applies to every persona. A walk speed is kept in the config for later versions, but it is not used yet.
+- Score = the average of the six category scores.
+
+Why graded: the first version counted a category as reached if any point was within 800 m. In central areas that saturates: every segment in Sternschanze scored 100, and 71 % in St. Pauli. With distance grading the same areas spread out (Sternschanze 60–100, median 92; St. Pauli 12–97, median 71; Iserbrook 5–67, median 31), so a street next to a supermarket scores above one 700 m away.
 
 ### Connectivity
 
@@ -131,12 +133,17 @@ Scored segments only; the 800 m download buffers give the same picture (89–97 
 
 ### Transit access
 
-- Walking distance along the network to the nearest bus, tram or rail stop.
-- **100 within 300 m**, falling linearly to **0 at 800 m**. A segment with no stop reachable gets 0.
+- **Any stop** (bus, tram or rail): walking distance along the network to the nearest one. **100 within 150 m**, falling linearly to **0 at 800 m**.
+- **Rail station** (rail, U-Bahn or S-Bahn; `railway=station` or `railway=halt`, list in the config): people walk further to a fast, frequent train, so a station gets its own, longer scale: **100 within 300 m**, falling linearly to **0 at 1,000 m**. Tram stops (`railway=tram_stop`) and bus stations count as ordinary stops.
+- The score is the **better of the two**. A segment with no stop and no station in reach gets 0.
+
+Why: with one scale of 300 m → 800 m, nearly every inner-city segment scored 100 (96 % in Sternschanze, 78 % in St. Pauli), because bus stops are everywhere. The tighter stop scale and the separate station scale give 71–100 in Sternschanze (median 100, 67 % at 100), 24–100 in St. Pauli (median 99) and 15–100 in Iserbrook (median 88). Sternschanze still scores high almost everywhere: it has eight U-Bahn and S-Bahn stations within reach.
+
+**Limitation:** the download buffer is 800 m, so a rail station 800–1,000 m beyond the edge of the study area is not seen. Only segments near the edge are affected, and they lose at most 29 points of the station score (the value at 800 m).
 
 ### Walking distances
 
-Transit and amenity access use the same walking distance:
+Transit and amenity access measure walking distance the same way:
 
 - Each stop or amenity point is snapped to its nearest network node. The distance from the point to that node is not added.
 - Distances are walked along the full network, routing-only segments included, and **in both directions on one-way streets**. The downloaded graph keeps one-way roads one-way (1,322 of 22,443 edges in the Kreuzberg download), which matters for cars, not for pedestrians.
@@ -167,7 +174,7 @@ The weakest-streets table lists the lowest-scoring segments that have a `name`. 
 ## Scenarios
 
 - **Added crossing:** counts as a marked crossing for every segment within **50 m**, so their crossing sub-score is recalculated.
-- **Added amenity:** counts for every segment that can reach it within **800 m along the network**, so their amenity score is recalculated.
+- **Added amenity:** its category distance is recalculated for every segment that can reach it within **800 m along the network**, and with it their amenity score.
 
 ## Data completeness
 

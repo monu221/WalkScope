@@ -6,7 +6,6 @@ area:
   max_km2: 5                 # larger areas are refused (download time and server load)
 
 walking:
-  max_distance_m: 800        # 10-minute walk, used for every persona in v1
   speed_kmh: 4.8             # kept for later versions; not used in v1
 
 pedestrian_only_highways: [footway, pedestrian, path, steps]
@@ -27,8 +26,11 @@ routing_only:
   highway: [corridor]
 
 amenity:
-  # A category is reached if any matching feature is within walking.max_distance_m.
-  # Score = categories reached / number of categories * 100.
+  # Each category scores by the walking distance to its nearest point: 100 within
+  # full_score_m, falling linearly to 0 at zero_score_m (a 10-minute walk).
+  # The amenity score is the average of the category scores.
+  full_score_m: 200
+  zero_score_m: 800
   categories:
     groceries:
       shop: [supermarket, convenience, greengrocer, bakery, butcher]
@@ -160,8 +162,18 @@ traffic_stress:
     walk: 7
 
 transit:
-  full_score_m: 300          # 100 points within this walking distance
-  zero_score_m: 800          # 0 points at and beyond this distance
+  # Score = the better of the two below. Distances are walked along the network.
+  stop:                      # any bus, tram or rail stop
+    full_score_m: 150        # 100 points within this walking distance
+    zero_score_m: 800        # 0 points at and beyond this distance
+  rail_station:              # rail, U-Bahn or S-Bahn station: worth a longer walk
+    full_score_m: 300
+    zero_score_m: 1000
+  # Stops carrying any of these tags count as rail stations. U-Bahn and S-Bahn
+  # stations are railway=station too (with station=subway / light_rail).
+  rail_station_tags:
+    railway: [station, halt]
+  # Everything downloaded as a transit stop.
   stop_tags:
     highway: [bus_stop]
     public_transport: [platform, stop_position, station]

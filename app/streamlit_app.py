@@ -43,6 +43,11 @@ FIRST_RUN_NOTE = ("The first run for a place can take a few minutes while map da
                   "After that it opens instantly.")
 
 
+@st.cache_resource(show_spinner=False)
+def _params() -> dict:
+    return load_indicator_params()
+
+
 # --- What the map can show ----------------------------------------------------
 # Each function turns segment columns into short text for the click popup or
 # the weakest-streets table.
@@ -85,21 +90,49 @@ def density_text(seg: pd.DataFrame) -> pd.Series:
     return seg["intersection_density"].round().astype(int).astype(str) + " per km²"
 
 
+def _walk_text(dist: pd.Series, reach_m: float) -> pd.Series:
+    """'250 m walk' (rounded to 10 m), or 'none within <reach> m' for NaN."""
+    text = dist.round(-1).astype("Int64").astype(str) + " m walk"
+    return text.where(dist.notna(), f"none within {reach_m:,.0f} m")
+
+
 def stop_text(seg: pd.DataFrame) -> pd.Series:
-    walk = _params()["walking"]["max_distance_m"]
-    dist = seg["transit_distance_m"]
-    return (dist.round(-1).astype("Int64").astype(str) + " m walk").where(dist.notna(), f"none within {walk} m")
+    return _walk_text(seg["transit_distance_m"], _params()["transit"]["stop"]["zero_score_m"])
+
+
+def station_text(seg: pd.DataFrame) -> pd.Series:
+    return _walk_text(seg["station_distance_m"], _params()["transit"]["rail_station"]["zero_score_m"])
 
 
 CATEGORY_LABELS = {"cafe": "café"}
 
 
-def missing_amenities(seg: pd.DataFrame) -> pd.Series:
-    cats = list(_params()["amenity"]["categories"])
-    reached = seg[[f"amenity_{c}" for c in cats]].to_numpy(dtype=bool)
+def _categories() -> list[str]:
+    return list(_params()["amenity"]["categories"])
+
+
+def furthest_amenity(seg: pd.DataFrame) -> pd.Series:
+    """What pulls the amenity score down: categories out of reach, else the furthest one."""
+    cats = _categories()
+    reach = _params()["amenity"]["zero_score_m"]
     names = [CATEGORY_LABELS.get(c, c) for c in cats]
-    text = [", ".join(n for n, ok in zip(names, row) if not ok) or "none" for row in reached]
+    dist = seg[[f"amenity_{c}_m" for c in cats]].to_numpy(dtype=float)
+    text = []
+    for row in dist:
+        missing = [n for n, d in zip(names, row) if pd.isna(d)]
+        if missing:
+            text.append(f"none within {reach:,.0f} m: " + ", ".join(missing))
+        else:
+            i = int(row.argmax())
+            text.append(f"{names[i]}, {round(row[i], -1):.0f} m walk")
     return pd.Series(text, index=seg.index)
+
+
+def amenity_popup() -> dict[str, Callable[[pd.DataFrame], pd.Series]]:
+    """One popup line per category: walking distance to the nearest one."""
+    reach = _params()["amenity"]["zero_score_m"]
+    return {CATEGORY_LABELS.get(c, c).capitalize(): (lambda seg, c=c: _walk_text(seg[f"amenity_{c}_m"], reach))
+            for c in _categories()}
 
 
 @dataclass(frozen=True)
@@ -122,20 +155,15 @@ VIEWS = [
          popup={"Intersections within 400 m": density_text},
          table={"Intersections within 400 m": density_text}),
     View("transit", "Transit access",
-         popup={"Nearest stop": stop_text},
-         table={"Nearest stop": stop_text}),
+         popup={"Nearest stop": stop_text, "Nearest rail station": station_text},
+         table={"Nearest stop": stop_text, "Nearest rail station": station_text}),
     View("amenity", "Amenity access",
-         popup={"Not within 800 m": missing_amenities},
-         table={"Not within 800 m": missing_amenities}),
+         popup=amenity_popup(),
+         table={"Furthest category": furthest_amenity}),
 ]
 
 
 # --- Data -----------------------------------------------------------------------
-
-@st.cache_resource(show_spinner=False)
-def _params() -> dict:
-    return load_indicator_params()
-
 
 def pedestrian_only(seg: pd.DataFrame) -> pd.Series:
     allowed = _params()["pedestrian_only_highways"]
@@ -284,8 +312,9 @@ def render_about() -> None:
             "Each street segment gets five indicator scores from 0 (worst) to 100 (best), calculated "
             "from OpenStreetMap data. Use **Map shows** in the sidebar to colour the streets by one of them: "
             "traffic stress (speed limit, lanes), pedestrian infrastructure (sidewalks, crossings), "
-            "connectivity (street intersections within 400 m), transit access (walk to the nearest stop) "
-            "or amenity access (everyday destinations within an 800 m walk). A later version combines "
+            "connectivity (street intersections within 400 m), transit access (walk to the nearest stop "
+            "or rail station) or amenity access (walk to the nearest of six everyday destinations). "
+            "A later version combines "
             "them into one score, weighted for the selected persona."
         )
     st.caption("Map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, "

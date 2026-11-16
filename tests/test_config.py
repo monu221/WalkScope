@@ -106,10 +106,10 @@ def test_missing_file_rejected(tmp_path):
 def test_shipped_indicator_params_match_method():
     params = load_indicator_params()
     assert params["area"]["buffer_m"] == 800
-    assert params["walking"]["max_distance_m"] == 800
+    assert (params["amenity"]["full_score_m"], params["amenity"]["zero_score_m"]) == (200, 800)
     assert params["connectivity"]["radius_m"] == 400
     assert (params["connectivity"]["density_zero"], params["connectivity"]["density_full"]) == (30, 150)
-    assert (params["transit"]["full_score_m"], params["transit"]["zero_score_m"]) == (300, 800)
+    assert (params["transit"]["stop"]["full_score_m"], params["transit"]["stop"]["zero_score_m"]) == (150, 800)
     assert params["infrastructure"]["base_mix"] == {"sidewalk": 60, "crossing": 40}
     assert params["infrastructure"]["missing_score"] == 50
     assert params["infrastructure"]["crossing"]["search_radius_m"] == 50
@@ -142,8 +142,14 @@ def shipped_params():
 
 
 def test_inverted_transit_thresholds_rejected(tmp_path, shipped_params):
-    shipped_params["transit"]["full_score_m"] = 900
-    with pytest.raises(ConfigError, match="transit"):
+    shipped_params["transit"]["rail_station"]["full_score_m"] = 1200
+    with pytest.raises(ConfigError, match="transit.rail_station"):
+        load_indicator_params(_write(tmp_path, shipped_params))
+
+
+def test_inverted_amenity_thresholds_rejected(tmp_path, shipped_params):
+    shipped_params["amenity"]["full_score_m"] = 900
+    with pytest.raises(ConfigError, match="amenity"):
         load_indicator_params(_write(tmp_path, shipped_params))
 
 

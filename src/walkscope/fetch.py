@@ -36,7 +36,8 @@ truststore.inject_into_ssl()
 
 CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
 # Bump when the cached content or its shape changes, so old cache files are ignored.
-CACHE_VERSION = 2
+# (Re-classifying needs no new download: OSMnx's HTTP cache still has the responses.)
+CACHE_VERSION = 3
 
 # All OSMnx HTTP responses (Nominatim and Overpass) are cached here.
 ox.settings.use_cache = True
@@ -178,7 +179,7 @@ class AreaData:
     buffered: BaseGeometry        # area + buffer (data was downloaded for this)
     graph: nx.MultiDiGraph        # OSMnx walking network
     pois: gpd.GeoDataFrame        # one row per (feature, amenity category), column `category`
-    stops: gpd.GeoDataFrame       # transit stops
+    stops: gpd.GeoDataFrame       # transit stops, column `rail_station` (bool)
     street_points: gpd.GeoDataFrame  # crossing and kerb nodes, columns `highway`, `crossing`, `kerb`
 
 
@@ -295,7 +296,7 @@ def classify_features(
     if features.empty:
         return (
             empty.assign(category=pd.Series(dtype=str)),
-            empty.copy(),
+            empty.assign(rail_station=pd.Series(dtype=bool)),
             empty.assign(highway=None, crossing=None, kerb=None),
         )
 
@@ -309,7 +310,9 @@ def classify_features(
         poi_parts.append(part)
     pois = gpd.GeoDataFrame(pd.concat(poi_parts), geometry="geometry", crs=crs)
 
-    stops = points.loc[_matches(points, params["transit"]["stop_tags"]), ["geometry"]].copy()
+    is_stop = _matches(points, params["transit"]["stop_tags"])
+    stops = points.loc[is_stop, ["geometry"]].copy()
+    stops["rail_station"] = _matches(points, params["transit"]["rail_station_tags"])[is_stop].to_numpy()
 
     # Crossings and kerbs are only meaningful as nodes on the street, not as ways/areas.
     is_node = features.geom_type == "Point"

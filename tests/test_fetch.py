@@ -151,6 +151,7 @@ def test_classify_splits_pois_stops_and_street_points(raw_features, params):
     assert raw_features.loc[("way", 2)].geometry.contains(park)   # point lies inside the park
 
     assert list(stops.index) == [("node", 4)]
+    assert stops["rail_station"].tolist() == [False]
 
     # Crossing node and kerb node kept; the crossing *way* is not a street point.
     assert sorted(street.index) == [("node", 5), ("node", 6)]
@@ -158,9 +159,29 @@ def test_classify_splits_pois_stops_and_street_points(raw_features, params):
     assert street.loc[("node", 6), "kerb"] == "lowered"
 
 
+def test_classify_marks_rail_stations(raw_features, params):
+    import pandas as pd
+    from shapely.geometry import Point
+    extra = gpd.GeoDataFrame(
+        pd.DataFrame([
+            {"element": "node", "id": 20, "railway": "station", "station": "subway",
+             "public_transport": "station", "geometry": Point(13.401, 52.521)},
+            {"element": "node", "id": 21, "railway": "halt", "geometry": Point(13.402, 52.521)},
+            {"element": "node", "id": 22, "railway": "tram_stop", "geometry": Point(13.403, 52.521)},
+            {"element": "node", "id": 23, "public_transport": "station", "bus": "yes",
+             "geometry": Point(13.404, 52.521)},
+        ]).set_index(["element", "id"]), geometry="geometry", crs="EPSG:4326")
+    _, stops, _ = classify_features(pd.concat([raw_features, extra]), params)
+    rail = stops["rail_station"]
+    assert rail[("node", 20)] and rail[("node", 21)]            # U-Bahn station, halt
+    assert not rail[("node", 22)] and not rail[("node", 23)]    # tram stop, bus station
+    assert not rail[("node", 4)]                                 # bus stop
+
+
 def test_classify_handles_no_features(params):
     pois, stops, street = classify_features(gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"), params)
     assert pois.empty and stops.empty and street.empty
+    assert "rail_station" in stops.columns
     assert "category" in pois.columns
     assert {"highway", "crossing", "kerb"} <= set(street.columns)
 

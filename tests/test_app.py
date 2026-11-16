@@ -56,19 +56,32 @@ def test_score_place_adds_transit_columns(offline):
     # so the walking distance from node n is 100 m per grid step.
     steps = seg["measure_node"].map(lambda n: (n % 3) + (2 - n // 3))
     assert seg["transit_distance_m"].tolist() == pytest.approx((steps * 100).tolist())
+    assert seg["station_distance_m"].isna().all()              # no rail station in the fixture
+    # 100 within 150 m, 0 at 800 m.
     assert seg["transit"].tolist() == pytest.approx(
-        [100 if d <= 300 else 80 for d in seg["transit_distance_m"]])
+        [min(100, (800 - d) / 650 * 100) for d in seg["transit_distance_m"]])
 
 
 def test_score_place_adds_amenity_columns(offline):
     seg = pipeline.score_place("Grid").segments
-    # Supermarket, park and pharmacy are all within 400 m of every grid node;
-    # no school, café or doctor -> 3 of 6 categories.
-    for cat in ("groceries", "park", "pharmacy"):
-        assert seg[f"amenity_{cat}"].all()
+    # Supermarket at grid node 4, park nearest node 0, pharmacy at node 8;
+    # 100 m per grid step. No school, café or doctor -> those score 0.
+    def steps(a, b):
+        return abs(a % 3 - b % 3) + abs(a // 3 - b // 3)
+
+    def lin(d):
+        return max(0, min(100, (800 - d) / 600 * 100))
+
+    expected = {"groceries": 4, "park": 0, "pharmacy": 8}
+    for cat, node in expected.items():
+        dist = seg["measure_node"].map(lambda n: 100 * steps(n, node))
+        assert seg[f"amenity_{cat}_m"].tolist() == pytest.approx(dist.tolist())
+        assert seg[f"amenity_{cat}"].tolist() == pytest.approx(dist.map(lin).tolist())
     for cat in ("school", "cafe", "doctor"):
-        assert not seg[f"amenity_{cat}"].any()
-    assert seg["amenity"].eq(50).all()
+        assert seg[f"amenity_{cat}_m"].isna().all()
+        assert seg[f"amenity_{cat}"].eq(0).all()
+    total = sum(seg[f"amenity_{c}"] for c in expected) / 6
+    assert seg["amenity"].tolist() == pytest.approx(total.tolist())
 
 
 def test_all_indicators_present_for_combined_score(offline):
@@ -235,8 +248,8 @@ def test_app_map_selector_shows_every_indicator(offline):
         "Pedestrian infrastructure": (["Sidewalk", "Crossing within 50 m"],
                                       ["not tagged"] * 3, [30, 30, 70]),
         "Connectivity": (["Intersections within 400 m"], ["0 per km²"] * 3, [0, 0, 0]),
-        "Transit access": (["Nearest stop"], None, None),
-        "Amenity access": (["Not within 800 m"], ["school, café, doctor"] * 3, [50, 50, 50]),
+        "Transit access": (["Nearest stop", "Nearest rail station"], None, None),
+        "Amenity access": (["Furthest category"], ["none within 800 m: school, café, doctor"] * 3, None),
     }
     for i, label in enumerate(labels[1:], start=1):
         at.sidebar.selectbox(key="view").set_value(i).run()
@@ -246,6 +259,7 @@ def test_app_map_selector_shows_every_indicator(offline):
         assert list(table.columns) == ["Street", "Road type", label, *extra]
         if first_values is not None:
             assert table[extra[0]].tolist() == first_values
+        if scores is not None:
             assert table[label].tolist() == scores
         assert at.metric[2].label == f"Mean {label.lower()}"
-    assert table["Not within 800 m"].iloc[0] == "school, café, doctor"
+    assert table["Furthest category"].iloc[0] == "none within 800 m: school, café, doctor"
