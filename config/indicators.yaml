@@ -3,6 +3,7 @@
 
 area:
   buffer_m: 800              # download this much around the study area; score only inside it
+  max_km2: 5                 # larger areas are refused (download time and server load)
 
 walking:
   max_distance_m: 800        # 10-minute walk, used for every persona in v1

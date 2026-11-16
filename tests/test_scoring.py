@@ -1,0 +1,61 @@
+import pandas as pd
+import pytest
+
+from walkscope.config import load_personas
+from walkscope.scoring import display_name, score_segments, weakest
+
+PERSONAS = load_personas()
+
+
+@pytest.fixture
+def segs():
+    return pd.DataFrame({
+        "name": ["A Street", "A Street", None, ["B Road", "C Lane"], "D Steps"],
+        "highway": ["residential", "residential", "footway", "primary", ["footway", "steps"]],
+        "scored": [True, True, True, True, True],
+        "amenity": [100, 50, 0, 80, 60],
+        "connectivity": [100, 50, 0, 80, 60],
+        "infrastructure": [100, 50, 0, 80, 60],
+        "traffic_stress": [100, 50, 0, 80, 60],
+        "transit": [100, 50, 0, 80, 60],
+    })
+
+
+def test_equal_indicators_give_that_score(segs):
+    score = score_segments(segs, PERSONAS["general_adult"])
+    assert score.tolist() == [100, 50, 0, 80, 60]
+
+
+def test_weights_apply():
+    row = pd.DataFrame({"amenity": [100], "connectivity": [0], "infrastructure": [0],
+                        "traffic_stress": [0], "transit": [0], "highway": ["residential"]})
+    assert score_segments(row, PERSONAS["general_adult"]).iloc[0] == 30
+    assert score_segments(row, PERSONAS["wheelchair"]).iloc[0] == 20
+
+
+def test_steps_are_zero_for_wheelchair_only(segs):
+    assert score_segments(segs, PERSONAS["wheelchair"]).iloc[4] == 0     # footway|steps
+    assert score_segments(segs, PERSONAS["general_adult"]).iloc[4] == 60
+
+
+def test_missing_indicator_is_an_error(segs):
+    with pytest.raises(KeyError, match="transit"):
+        score_segments(segs.drop(columns="transit"), PERSONAS["general_adult"])
+
+
+def test_display_name():
+    assert display_name("A") == "A"
+    assert display_name(["A", "B", "A"]) == "A / B"
+    assert display_name(None) is None
+
+
+def test_weakest_named_only_one_row_per_street(segs):
+    table = weakest(segs, "traffic_stress", n=10)
+    assert table["street"].tolist() == ["A Street", "D Steps", "B Road / C Lane"]   # unnamed left out
+    assert table.loc[0, "traffic_stress"] == 50                                    # A Street's worst segment
+    assert table.loc[1, "type"] == "footway / steps"
+
+
+def test_weakest_ignores_unscored(segs):
+    segs.loc[1, "scored"] = False
+    assert weakest(segs, "traffic_stress").loc[0, "traffic_stress"] == 60
