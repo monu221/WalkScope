@@ -75,3 +75,15 @@ Each step ends with passing tests and a commit.
 9. **Draw an area on the map** (streamlit-folium Draw plugin).
 10. **Report:** Markdown, then PDF.
 11. **Timing and validation:** a 2 km² area in under 60 s; correlation with pedestrian counts for the validation city.
+
+## Download robustness
+
+Done:
+- The Overpass server is set by `WALKSCOPE_OVERPASS_URL` (default `https://overpass-api.de/api`).
+- Each request (geocoding, street graph, features) gets 3 tries with 5 s and 10 s waits between them.
+- If every try fails, `ServerBusyError` is raised, which the app shows as "The map data server is busy. Please try again in a minute."
+
+Possible later improvements:
+- **Fallback server.** A second public Overpass server for when the main one stays busy. Before relying on one, check that it returns the same data as the main server. Tested so far: `overpass.private.coffee` timed out repeatedly (3 × 180 s) on the Aachen test area, and `maps.mail.ru` was not tested. The code would only need to loop `with_retry` over a list of servers.
+- **Shorter request timeout.** OSMnx waits up to 180 s per try (`ox.settings.requests_timeout`), so the worst case before the busy message is about 9 minutes.
+- **Own Overpass instance.** For heavy use or the validation runs, point `WALKSCOPE_OVERPASS_URL` at a local Overpass server.

@@ -1,12 +1,113 @@
 import copy
 
 import geopandas as gpd
+import osmnx as ox
 import pytest
+import requests
 from shapely.geometry import Point
 
 from walkscope import fetch
 from walkscope.config import load_indicator_params
-from walkscope.fetch import AreaError, area_from_place, buffer_area, classify_features, feature_tags
+from walkscope.fetch import (
+    BUSY_MESSAGE,
+    DEFAULT_OVERPASS_URL,
+    AreaError,
+    ServerBusyError,
+    area_from_place,
+    buffer_area,
+    classify_features,
+    feature_tags,
+    overpass_url,
+    with_retry,
+)
+
+
+@pytest.fixture
+def sleeps(monkeypatch):
+    """Record backoff waits instead of sleeping."""
+    waits = []
+    monkeypatch.setattr(fetch, "_sleep", waits.append)
+    return waits
+
+
+def busy():
+    return ox._errors.ResponseStatusCodeError("'overpass-api.de' responded: 502 Bad Gateway")
+
+
+# --- server and retry ---------------------------------------------------------
+
+def test_default_server(monkeypatch):
+    monkeypatch.delenv("WALKSCOPE_OVERPASS_URL", raising=False)
+    assert overpass_url() == DEFAULT_OVERPASS_URL == "https://overpass-api.de/api"
+
+
+def test_server_from_environment(monkeypatch):
+    monkeypatch.setenv("WALKSCOPE_OVERPASS_URL", " http://localhost:12345/api/ ")
+    assert overpass_url() == "http://localhost:12345/api"
+    monkeypatch.setenv("WALKSCOPE_OVERPASS_URL", "")
+    assert overpass_url() == DEFAULT_OVERPASS_URL
+
+
+def test_retry_succeeds_after_failures_with_backoff(sleeps):
+    calls = []
+    before = ox.settings.overpass_url
+
+    def fn():
+        calls.append((ox.settings.overpass_url, ox.settings.overpass_rate_limit))
+        if len(calls) < 3:
+            raise busy() if len(calls) == 1 else requests.exceptions.ConnectionError("reset")
+        return "data"
+
+    assert with_retry(fn, "https://a/api") == "data"
+    assert calls == [("https://a/api", False)] * 3     # rate-limit check only on overpass-api.de
+    assert sleeps == [5, 10]
+    assert ox.settings.overpass_url == before          # setting restored
+
+
+def test_rate_limit_check_on_default_server(sleeps):
+    seen = []
+    with_retry(lambda: seen.append(ox.settings.overpass_rate_limit), DEFAULT_OVERPASS_URL)
+    assert seen == [True]
+
+
+def test_all_attempts_fail_gives_busy_error(sleeps):
+    def fn():
+        raise busy()
+
+    with pytest.raises(ServerBusyError) as err:
+        with_retry(fn, "https://a/api")
+    assert str(err.value) == BUSY_MESSAGE == "The map data server is busy. Please try again in a minute."
+    assert len(err.value.attempts) == 3
+    assert sleeps == [5, 10]
+
+
+def test_other_errors_are_not_retried(sleeps):
+    calls = []
+
+    def fn():
+        calls.append(1)
+        raise KeyError("bug")
+
+    with pytest.raises(KeyError):
+        with_retry(fn, "https://a/api")
+    assert calls == [1] and sleeps == []
+
+
+def test_download_reports_empty_area(monkeypatch, sleeps):
+    def no_streets(*a, **k):
+        raise ox._errors.InsufficientResponseError("No data elements in server response")
+    monkeypatch.setattr(fetch.ox, "graph_from_polygon", no_streets)
+    with pytest.raises(AreaError, match="No walkable streets"):
+        fetch._download(None, {})
+
+
+def test_geocoding_network_failure_gives_busy_error(monkeypatch, sleeps):
+    def down(name):
+        raise requests.exceptions.ConnectionError("unreachable")
+    monkeypatch.setattr(fetch.ox, "geocode_to_gdf", down)
+    with pytest.raises(ServerBusyError):
+        area_from_place("Aachen")
+    assert len(sleeps) == 2                             # Nominatim: one server, 3 tries
 
 
 @pytest.fixture

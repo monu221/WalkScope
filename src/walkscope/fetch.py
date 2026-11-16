@@ -8,15 +8,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import pickle
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterator, TypeVar
 
 import geopandas as gpd
 import networkx as nx
 import osmnx as ox
 import pandas as pd
+import requests
 import truststore
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
@@ -76,6 +81,83 @@ class AreaError(ValueError):
     """Raised when a place can't be turned into a usable study area."""
 
 
+# --- Overpass server and retry -----------------------------------------------
+
+log = logging.getLogger(__name__)
+T = TypeVar("T")
+
+DEFAULT_OVERPASS_URL = "https://overpass-api.de/api"
+OVERPASS_URL_ENV = "WALKSCOPE_OVERPASS_URL"
+
+TRIES = 3
+FIRST_WAIT_S = 5          # wait before the 2nd try; doubles before each further try
+
+BUSY_MESSAGE = "The map data server is busy. Please try again in a minute."
+
+# Errors worth retrying: HTTP error status (502/504/429 when a server is at
+# capacity), timeouts, dropped connections, truncated responses.
+RETRYABLE_ERRORS = (ox._errors.ResponseStatusCodeError, requests.exceptions.RequestException)
+
+_sleep = time.sleep       # replaced in tests
+
+
+class ServerBusyError(RuntimeError):
+    """Every retry failed. `str(error)` is the message to show users."""
+
+    def __init__(self, attempts: list[str]):
+        super().__init__(BUSY_MESSAGE)
+        self.attempts = attempts   # one line per failed attempt, for logs
+
+
+def overpass_url() -> str:
+    """Overpass server: WALKSCOPE_OVERPASS_URL if set, else overpass-api.de."""
+    return os.environ.get(OVERPASS_URL_ENV, "").strip().rstrip("/") or DEFAULT_OVERPASS_URL
+
+
+@contextmanager
+def _use_overpass_server(url: str | None) -> Iterator[None]:
+    """Point OSMnx at one Overpass server for the duration of the block (None = leave as is)."""
+    if url is None:
+        yield
+        return
+    old = (ox.settings.overpass_url, ox.settings.overpass_rate_limit)
+    ox.settings.overpass_url = url
+    # Only overpass-api.de offers the /status endpoint OSMnx uses for rate limiting.
+    ox.settings.overpass_rate_limit = url == DEFAULT_OVERPASS_URL
+    try:
+        yield
+    finally:
+        ox.settings.overpass_url, ox.settings.overpass_rate_limit = old
+
+
+def with_retry(
+    fn: Callable[[], T],
+    server: str | None,
+    tries: int = TRIES,
+    first_wait_s: float = FIRST_WAIT_S,
+) -> T:
+    """Call `fn` against one server, retrying with exponential backoff.
+
+    `server` is an Overpass URL, or None to leave OSMnx's settings alone (for
+    Nominatim). Raises ServerBusyError if every try fails with a retryable
+    error. Other errors (e.g. "no data in this area") are raised immediately.
+    """
+    attempts: list[str] = []
+    wait = first_wait_s
+    for i in range(tries):
+        try:
+            with _use_overpass_server(server):
+                return fn()
+        except RETRYABLE_ERRORS as e:
+            line = f"{server or 'default server'} try {i + 1}: {type(e).__name__}: {str(e)[:200]}"
+            attempts.append(line)
+            log.warning(line)
+            if i < tries - 1:
+                _sleep(wait)
+                wait *= 2
+    raise ServerBusyError(attempts)
+
+
 @dataclass
 class AreaData:
     """Raw OSM data for one study area, all in EPSG:4326."""
@@ -91,9 +173,15 @@ class AreaData:
 # --- Study area ---------------------------------------------------------------
 
 def area_from_place(name: str) -> BaseGeometry:
-    """Geocode a place name to its boundary polygon via Nominatim."""
+    """Geocode a place name to its boundary polygon via Nominatim.
+
+    Network failures are retried and end in ServerBusyError; a place that
+    can't be found or isn't an area raises AreaError.
+    """
     try:
-        gdf = ox.geocode_to_gdf(name)
+        gdf = with_retry(lambda: ox.geocode_to_gdf(name), server=None)
+    except ServerBusyError:
+        raise
     except Exception as e:  # OSMnx raises several types for "not found" / "not a polygon"
         raise AreaError(f"Could not find an area boundary for {name!r}: {e}") from e
     geom = gdf.geometry.iloc[0]
@@ -135,19 +223,34 @@ def feature_tags(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _download(buffered: BaseGeometry, tags: dict[str, Any]) -> tuple[nx.MultiDiGraph, gpd.GeoDataFrame]:
-    """Fetch the walking graph and the features. The only function that hits the network."""
-    defaults = list(ox.settings.useful_tags_way)
-    ox.settings.useful_tags_way = defaults + [t for t in EXTRA_WAY_TAGS if t not in defaults]
+    """Fetch the walking graph and the features. The only function that hits Overpass.
+
+    Each of the two requests is retried with backoff; ServerBusyError if all
+    tries fail.
+    """
+    server = overpass_url()
+
+    def get_graph() -> nx.MultiDiGraph:
+        defaults = list(ox.settings.useful_tags_way)
+        ox.settings.useful_tags_way = defaults + [t for t in EXTRA_WAY_TAGS if t not in defaults]
+        try:
+            return ox.graph_from_polygon(
+                buffered, custom_filter=walk_filter(), simplify=True, retain_all=False
+            )
+        finally:
+            ox.settings.useful_tags_way = defaults
+
+    def get_features() -> gpd.GeoDataFrame:
+        try:
+            return ox.features_from_polygon(buffered, tags)
+        except ox._errors.InsufficientResponseError:
+            return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+
     try:
-        graph = ox.graph_from_polygon(
-            buffered, custom_filter=walk_filter(), simplify=True, retain_all=False
-        )
-    finally:
-        ox.settings.useful_tags_way = defaults
-    try:
-        features = ox.features_from_polygon(buffered, tags)
-    except ox._errors.InsufficientResponseError:
-        features = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+        graph = with_retry(get_graph, server)
+    except ox._errors.InsufficientResponseError as e:
+        raise AreaError("No walkable streets found in this area") from e
+    features = with_retry(get_features, server)
     return graph, features
 
 
