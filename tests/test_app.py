@@ -1,5 +1,6 @@
 """End-to-end: pipeline, map and the Streamlit page, on the offline grid fixture."""
 
+import re
 from pathlib import Path
 
 import folium
@@ -18,7 +19,7 @@ APP = str(Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py")
 def offline(monkeypatch, area_data):
     """Make score_place() run on the grid fixture instead of downloading."""
     monkeypatch.setattr(pipeline, "area_from_place", lambda name: area_data.area)
-    monkeypatch.setattr(pipeline, "fetch_area", lambda area, params: area_data)
+    monkeypatch.setattr(pipeline, "fetch_area", lambda area, params, **kw: area_data)
 
 
 def test_score_place_adds_traffic_columns(offline):
@@ -104,7 +105,7 @@ def test_too_large_area_is_refused(monkeypatch):
 def test_area_without_streets_is_refused(monkeypatch, area_data):
     tiny = box(13.3, 52.3, 13.3001, 52.3001)                 # nowhere near the grid
     monkeypatch.setattr(pipeline, "area_from_place", lambda name: tiny)
-    monkeypatch.setattr(pipeline, "fetch_area", lambda area, params: area_data.__class__(
+    monkeypatch.setattr(pipeline, "fetch_area", lambda area, params, **kw: area_data.__class__(
         tiny, area_data.buffered, area_data.graph, area_data.pois, area_data.stops, area_data.street_points))
     with pytest.raises(AreaError, match="No streets to score"):
         pipeline.score_place("Markt")
@@ -209,7 +210,7 @@ def test_app_example_button_scores_that_place(offline, monkeypatch, area_data):
 
 def test_app_second_visit_uses_memory(offline, monkeypatch):
     at = _run_app("Grid")
-    monkeypatch.setattr(pipeline, "fetch_area", lambda area, params: pytest.fail("downloaded again"))
+    monkeypatch.setattr(pipeline, "fetch_area", lambda area, params, **kw: pytest.fail("downloaded again"))
     at.run()
     assert not at.exception and at.metric[1].value == "0.7 km"
 
@@ -442,7 +443,7 @@ def test_app_aachen_example_is_a_drawn_area(monkeypatch, area_data):
     scored = []
     monkeypatch.setattr(pipeline, "area_from_place", lambda name: pytest.fail("geocoded the Aachen preset"))
 
-    def fake_fetch(area, params):
+    def fake_fetch(area, params, **kw):
         scored.append(area)
         return area_data.__class__(area_data.area, area_data.buffered, area_data.graph, area_data.pois,
                                    area_data.stops, area_data.street_points)
@@ -470,6 +471,32 @@ def test_app_examples_open_from_shipped_data(monkeypatch, button):
     assert "© [OpenStreetMap]" in note and "ODbL" in note
 
 
+def test_app_shows_steps_and_waiting_note_while_scoring(monkeypatch, area_data):
+    """A slow download: the status shows each step with its time, and the note about the public server.
+
+    The download ends busy, so the status stays on the page to be inspected (on success it is cleared).
+    """
+    import time as _time
+
+    def slow_fetch(area, params, progress=None, **kw):
+        progress(fetch.STEP_STREETS)
+        _time.sleep(1.5)
+        progress(fetch.STEP_FEATURES)
+        _time.sleep(1.2)
+        raise ServerBusyError(["x"])
+    monkeypatch.setattr(pipeline, "area_from_place", lambda name: area_data.area)
+    monkeypatch.setattr(pipeline, "fetch_area", slow_fetch)
+    at = _run_app("Grid")
+    assert not at.exception
+    text = " ".join(m.value for m in at.markdown)
+    assert re.search(rf"- {fetch.STEP_STREETS} \(0:0[12]\)", text)
+    assert f"- {fetch.STEP_FEATURES}…" in text
+    assert re.search(r"\*\*Elapsed: 0:0[2-5]\*\*", text)
+    assert any("public OpenStreetMap server" in c.value and "up to 10" in c.value for c in at.caption)
+    assert at.status[0].label.startswith("Could not score Grid (0:0")
+    assert fetch.BUSY_MESSAGE in at.error[0].value
+
+
 def _persona_caption(at):
     return next(c.value for c in at.sidebar.caption if c.value.startswith("Weights:"))
 
@@ -484,15 +511,22 @@ def test_app_report_downloads(offline):
     assert "For general adult" in next(c.value for c in at.sidebar.caption if c.value.startswith("For "))
 
 
-def test_file_stem():
+def _helpers():
+    """The app module. It runs main() on import, so Streamlit's page calls are stubbed out."""
     import importlib.util
     import sys
     from unittest import mock
-    # The app runs main() on import; import its helpers with Streamlit's page calls stubbed out.
     spec = importlib.util.spec_from_file_location("walkscope_app", APP)
     module = importlib.util.module_from_spec(spec)
     with mock.patch("streamlit.set_page_config"), mock.patch.dict(sys.modules, {"walkscope_app": module}):
         spec.loader.exec_module(module)
+    return module
+
+
+def test_text_helpers():
+    """Kept in one test at the end: importing the app outside AppTest leaves Streamlit state behind."""
+    module = _helpers()
+    assert [module.elapsed_text(s) for s in (0, 7.9, 155, 600)] == ["0:00", "0:07", "2:35", "10:00"]
     assert module.file_stem("Sternschanze, Hamburg") == "walkscope-sternschanze-hamburg"
     assert module.file_stem("Aachen city centre (Dom and Markt, 1.5 km²)") == \
         "walkscope-aachen-city-centre-dom-and-markt-1-5-km2"

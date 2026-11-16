@@ -55,7 +55,8 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None,
     `intersection_density` (per km²); `transit`, `transit_distance_m` (any
     stop) and `station_distance_m` (rail station), NaN beyond reach; `amenity`, and per category its score
     `amenity_<category>` and distance `amenity_<category>_m` (NaN beyond reach).
-    `progress` is called with STEP_DOWNLOAD and STEP_SCORE as each starts.
+    `progress` is called with STEP_DOWNLOAD and STEP_SCORE as each starts, and
+    in between with fetch's download steps when the data is not stored yet.
     Raises AreaError (too large, no streets) or fetch.ServerBusyError.
     """
     params = params or load_indicator_params()
@@ -68,7 +69,7 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None,
         )
 
     progress(STEP_DOWNLOAD)
-    data = fetch_area(area, params)
+    data = fetch_area(area, params, progress=progress)
     progress(STEP_SCORE)
     net = build_network(data, params)
     seg = net.segments

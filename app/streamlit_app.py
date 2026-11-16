@@ -11,8 +11,12 @@ a View to VIEWS. The selected persona is applied once per run
 from __future__ import annotations
 
 import logging
+import threading
+import time
 import traceback
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as StillRunning
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -61,9 +65,12 @@ AREA_MODES = {"place": "Place name", "draw": "Draw on map"}
 DRAWN_KEY = "drawn_areas"       # session state: drawn-area name -> outline (WKT, lat/lon)
 WEAKEST_ROWS = 15
 CACHED_PLACES = 5
-BUSY_HINT = "Wait a minute, then press **Score area** again. Places you have scored before open instantly."
-FIRST_RUN_NOTE = ("The first run for a place can take a few minutes while map data downloads. "
-                  "After that it opens instantly.")
+BUSY_HINT = ("The public map server stayed busy for several minutes. Wait a few minutes, then press "
+             "**Score area** again. The examples and places you have scored before open in seconds.")
+FIRST_RUN_NOTE = ("A new area downloads its map data from the public OpenStreetMap server, which often "
+                  "takes 3–5 minutes and up to 10 when it is busy. Please keep this page open. "
+                  "The examples and places you have scored before open in seconds.")
+TICK_S = 1.0                    # how often the elapsed time is redrawn while scoring
 
 
 @st.cache_resource(show_spinner=False)
@@ -244,27 +251,76 @@ def load(place: str) -> Network:
         results.move_to_end(place)
         return results[place]
 
+    outline = drawn_outline(place)
     box = st.empty()
     with box.container():
-        with st.status(f"Scoring {place}…", expanded=True) as status:
-            st.caption(FIRST_RUN_NOTE)
-
-            def progress(step: str) -> None:
-                status.update(label=f"{step}…")
-                st.write(f"{step}…")
-
-            try:
-                outline = drawn_outline(place)
-                net = (pipeline.score_area(outline, progress=progress) if outline is not None
-                       else pipeline.score_place(place, progress=progress))
-            except Exception:
-                status.update(label=f"Could not score {place}", state="error", expanded=False)
-                raise
+        net = _score_with_progress(place, outline)
     box.empty()
 
     results[place] = net
     while len(results) > CACHED_PLACES:
         results.popitem(last=False)
+    return net
+
+
+def elapsed_text(seconds: float) -> str:
+    """0:07, 2:35, ..."""
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes}:{secs:02d}"
+
+
+def _score_with_progress(place: str, outline) -> Network:
+    """Score in a worker thread and show the current step with a running clock until it ends.
+
+    The worker only records steps (Streamlit calls must stay in the script
+    thread); this loop draws them. If the user starts another run meanwhile,
+    Streamlit stops this loop, the worker still finishes, and its download
+    stays in the disk cache for the next try.
+    """
+    steps: list[tuple[str, float]] = []        # (step, time it started), appended by the worker
+    lock = threading.Lock()
+    start = time.monotonic()
+
+    def progress(step: str) -> None:
+        with lock:
+            steps.append((step, time.monotonic()))
+
+    def work() -> Network:
+        if outline is not None:
+            return pipeline.score_area(outline, progress=progress)
+        return pipeline.score_place(place, progress=progress)
+
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="walkscope-score")
+    future = pool.submit(work)
+    pool.shutdown(wait=False)
+    with st.status(f"Scoring {place}…", expanded=True) as status:
+        clock = st.empty()
+        log_box = st.empty()
+        st.caption(FIRST_RUN_NOTE)
+        shown = -1
+        while True:
+            try:
+                net = future.result(timeout=TICK_S if shown >= 0 else 0.2)
+                break
+            except StillRunning:
+                pass
+            except Exception:
+                status.update(label=f"Could not score {place} ({elapsed_text(time.monotonic() - start)})",
+                              state="error", expanded=False)
+                raise
+            with lock:
+                done = list(steps)
+            now = time.monotonic()
+            current = done[-1][0] if done else "Starting"
+            status.update(label=f"{current}… {elapsed_text(now - start)}")
+            clock.markdown(f"**Elapsed: {elapsed_text(now - start)}**")
+            if len(done) != shown:
+                lines = [f"- {step} ({elapsed_text(nxt - began)})"
+                         for (step, began), (_, nxt) in zip(done, done[1:])]
+                if done:
+                    lines.append(f"- {done[-1][0]}…")
+                log_box.markdown("\n".join(lines))
+                shown = len(done)
     return net
 
 

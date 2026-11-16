@@ -17,9 +17,10 @@ including OSMnx's own pauses), download (geocode excluded; graph + features +
 our retries), calculation (building the network and all five indicators, no
 network access), retries (failed tries that were retried).
 
-With the app's limits (60 s per request, 150 s per download) a slow server
-ends in "busy"; --no-limits uses 180 s per request and no budget, to measure
-how long the server actually takes when it is slow.
+With the app's limits (fetch.REQUEST_TIMEOUT_S per request,
+fetch.DOWNLOAD_BUDGET_S per download) a slow server ends in "busy";
+--no-limits uses 900 s per request and no budget, to measure how long the
+server actually takes when it is slow.
 """
 
 from __future__ import annotations
@@ -36,6 +37,8 @@ import osmnx as ox
 from walkscope import examples, fetch, pipeline
 from walkscope.config import load_indicator_params
 from walkscope.examples import AACHEN_CENTRE, STERNSCHANZE
+
+NO_LIMIT_TIMEOUT_S = 900
 
 AREAS = {"Sternschanze": STERNSCHANZE, "Aachen centre": AACHEN_CENTRE}
 
@@ -81,11 +84,11 @@ def _timed(name: str, store: dict[str, float]):
 
 
 def remove_limits() -> None:
-    """OSMnx's old request timeout (180 s) and no waiting budget."""
-    fetch.REQUEST_TIMEOUT_S = 180
+    """A request timeout far above the app's, and no waiting budget."""
+    fetch.REQUEST_TIMEOUT_S = NO_LIMIT_TIMEOUT_S
     fetch.DOWNLOAD_BUDGET_S = fetch.GEOCODE_BUDGET_S = 24 * 3600
-    ox.settings.requests_timeout = 180
-    ox.settings.overpass_settings = "[out:json][timeout:180]{maxsize}"
+    ox.settings.requests_timeout = NO_LIMIT_TIMEOUT_S
+    ox.settings.overpass_settings = f"[out:json][timeout:{NO_LIMIT_TIMEOUT_S}]{{maxsize}}"
 
 
 def measure(label: str, spec, run: int, params: dict) -> Row:
@@ -109,7 +112,7 @@ def measure(label: str, spec, run: int, params: dict) -> Row:
         row.download_s = time.perf_counter() - start
 
         fetch_area = pipeline.fetch_area
-        pipeline.fetch_area = lambda a, p: data
+        pipeline.fetch_area = lambda a, p, **kw: data
         try:
             start = time.perf_counter()
             net = pipeline.score_area(area, params)
@@ -157,7 +160,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--runs", type=int, default=1, help="runs per area (default 1)")
     parser.add_argument("--no-limits", action="store_true",
-                        help="180 s per request and no waiting budget, to see what the server needs")
+                        help="900 s per request and no waiting budget, to see what the server needs")
     args = parser.parse_args(argv)
 
     warnings.filterwarnings("ignore")

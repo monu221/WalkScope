@@ -125,14 +125,18 @@ OVERPASS_URL_ENV = "WALKSCOPE_OVERPASS_URL"
 TRIES = 3
 FIRST_WAIT_S = 5          # wait before the 2nd try; doubles before each further try
 
-# Limits on waiting, so a busy or silent server ends in the busy message within
-# a few minutes (docs/plan.md, "Download robustness"). Before, each request
-# waited up to OSMnx's 180 s, three times, and OSMnx itself also pauses
-# without limit: before each request while the server's status endpoint says
-# all slots are taken, and for 55 s before re-sending after a 429 or 504 reply.
-REQUEST_TIMEOUT_S = 60    # one HTTP request; also the Overpass query's own [timeout:]
-DOWNLOAD_BUDGET_S = 150   # everything for one area download (graph + features): tries, pauses, timeouts
-GEOCODE_BUDGET_S = 45     # the same for finding a place name
+# Limits on waiting, so a busy or silent server ends in the busy message instead
+# of hanging (docs/plan.md, "Download robustness"). OSMnx itself pauses without
+# limit: before each request while the server's status endpoint says all slots
+# are taken, and for 55 s before re-sending after a 429 or 504 reply.
+# Set from measurements on overpass-api.de (scripts/measure_timing.py
+# --no-limits, 2026-11-16): the graph request took about 70 s and the features
+# request 105-181 s, about 180-250 s per download. A slow success is better
+# than a quick failure, so the limits leave room for the slowest request and
+# a retry; the app shows elapsed time meanwhile.
+REQUEST_TIMEOUT_S = 300   # one HTTP request; also the Overpass query's own [timeout:]
+DOWNLOAD_BUDGET_S = 600   # everything for one area download (graph + features): tries, pauses, timeouts
+GEOCODE_BUDGET_S = 45     # the same for finding a place name (measured: about 1 s)
 MIN_TRY_S = 10            # don't start a try (or an OSMnx pause) with less time than this left
 
 # Fixed in the query so it doesn't change when a late try gets a shorter client
@@ -222,6 +226,7 @@ def with_retry(
     tries: int = TRIES,
     first_wait_s: float = FIRST_WAIT_S,
     deadline: Deadline | None = None,
+    on_retry: Callable[[int], None] | None = None,
 ) -> T:
     """Call `fn` against one server, retrying with exponential backoff, until `deadline`.
 
@@ -229,7 +234,8 @@ def with_retry(
     Nominatim). `deadline` defaults to DOWNLOAD_BUDGET_S from now; no try or
     wait (ours or OSMnx's) runs past it. Raises ServerBusyError if every try
     fails with a retryable error or time runs out. Other errors (e.g. "no data
-    in this area") are raised immediately.
+    in this area") are raised immediately. `on_retry(n)` is called before
+    try n (2, 3, ...), e.g. to tell the user the server is busy.
     """
     deadline = deadline or Deadline(DOWNLOAD_BUDGET_S)
     attempts: list[str] = []
@@ -254,6 +260,8 @@ def with_retry(
                 if wait > deadline.remaining() - MIN_TRY_S:
                     attempts.append(f"{name}: out of time for try {i + 2}")
                     break
+                if on_retry:
+                    on_retry(i + 2)
                 _sleep(wait)
                 wait *= 2
     raise ServerBusyError(attempts)
@@ -331,12 +339,21 @@ def feature_tags(params: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def _download(buffered: BaseGeometry, tags: dict[str, Any]) -> tuple[nx.MultiDiGraph, gpd.GeoDataFrame]:
+# Progress steps for fetch_area's `progress` callback (a busy server adds a note).
+STEP_STREETS = "Downloading streets"
+STEP_FEATURES = "Downloading shops, stops and crossings"
+
+
+def _download(buffered: BaseGeometry, tags: dict[str, Any],
+              progress: Callable[[str], None] | None = None) -> tuple[nx.MultiDiGraph, gpd.GeoDataFrame]:
     """Fetch the walking graph and the features. The only function that hits Overpass.
 
     Each of the two requests is retried with backoff, within one shared
     DOWNLOAD_BUDGET_S; ServerBusyError if all tries fail or time runs out.
+    `progress` is called with STEP_STREETS and STEP_FEATURES as each starts,
+    and with a note when a request is retried.
     """
+    progress = progress or (lambda step: None)
     server = overpass_url()
     deadline = Deadline(DOWNLOAD_BUDGET_S)
 
@@ -357,12 +374,17 @@ def _download(buffered: BaseGeometry, tags: dict[str, Any]) -> tuple[nx.MultiDiG
         except ox._errors.InsufficientResponseError:
             return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
 
+    def retrying(step: str) -> Callable[[int], None]:
+        return lambda n: progress(f"{step} (map server busy, try {n} of {TRIES})")
+
+    progress(STEP_STREETS)
     try:
-        graph = with_retry(get_graph, server, deadline=deadline)
+        graph = with_retry(get_graph, server, deadline=deadline, on_retry=retrying(STEP_STREETS))
     except ox._errors.InsufficientResponseError as e:
         raise AreaError("No walkable streets found in this area.",
                         hint="Check that the place is a town or neighbourhood, not a lake or forest.") from e
-    features = with_retry(get_features, server, deadline=deadline)
+    progress(STEP_FEATURES)
+    features = with_retry(get_features, server, deadline=deadline, on_retry=retrying(STEP_FEATURES))
     return graph, features
 
 
@@ -445,11 +467,13 @@ def fetch_area(
     area: BaseGeometry,
     params: dict[str, Any] | None = None,
     cache_dir: str | Path | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> AreaData:
     """Return OSM data for the area plus its buffer.
 
     From the bundled examples or the disk cache if already downloaded, else
-    from Overpass (then saved to the disk cache).
+    from Overpass (then saved to the disk cache). `progress` gets the download
+    steps (see _download).
     """
     params = params or load_indicator_params()
     cache_dir = Path(cache_dir) if cache_dir else CACHE_DIR
@@ -467,7 +491,7 @@ def fetch_area(
             return pickle.load(f)  # our own file, written below
 
     buffered = buffer_area(area, buffer_m)
-    graph, features = _download(buffered, tags)
+    graph, features = _download(buffered, tags, progress)
     pois, stops, street_points = classify_features(features, params)
     data = AreaData(area, buffered, graph, pois, stops, street_points)
 

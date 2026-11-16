@@ -219,7 +219,7 @@ def test_fetch_area_downloads_once_then_uses_cache(monkeypatch, tmp_path, grid_g
                                                    raw_features, params):
     calls = []
 
-    def fake_download(buffered, tags):
+    def fake_download(buffered, tags, progress=None):
         calls.append(buffered)
         return grid_graph, raw_features
 
@@ -285,14 +285,18 @@ def clock(monkeypatch):
     return now
 
 
-def test_request_timeout_and_query_timeout_are_60_s():
-    assert fetch.REQUEST_TIMEOUT_S == 60
-    assert ox.settings.requests_timeout == 60
-    assert "[timeout:60]" in ox.settings.overpass_settings
+def test_limits_leave_room_for_the_measured_download_times():
+    """Measured on overpass-api.de: graph about 70 s, features 105-181 s (docs/plan.md)."""
+    assert fetch.REQUEST_TIMEOUT_S == 300
+    assert ox.settings.requests_timeout == 300
+    assert "[timeout:300]" in ox.settings.overpass_settings
+    assert fetch.DOWNLOAD_BUDGET_S == 600
+    slowest_download = 70 + 181
+    assert fetch.DOWNLOAD_BUDGET_S >= slowest_download + 181 + fetch.FIRST_WAIT_S   # room to retry features
 
 
 def test_silent_server_gives_busy_within_the_budget(clock):
-    """Each try hangs for the full request timeout: the old settings needed 3 x 180 + 15 = 555 s."""
+    """Each try hangs for the full request timeout: busy after the budget, not later."""
     timeouts = []
 
     def hang():
@@ -303,9 +307,9 @@ def test_silent_server_gives_busy_within_the_budget(clock):
     with pytest.raises(ServerBusyError) as err:
         with_retry(hang, "https://a/api")
     assert clock["t"] <= fetch.DOWNLOAD_BUDGET_S
-    # 60 s, wait 5, 60 s, wait 10, and the last try gets the 15 s left: busy at exactly 150 s.
-    assert timeouts == [60, 60, 15] and clock["t"] == 150
-    assert len(err.value.attempts) == 3
+    # 300 s, wait 5, and the second try gets the 295 s left: busy at exactly 600 s.
+    assert timeouts == [300, 295] and clock["t"] == 600
+    assert "out of time for try 3" in err.value.attempts[-1]
 
 
 def test_last_try_gets_only_the_time_left(clock):
@@ -318,8 +322,8 @@ def test_last_try_gets_only_the_time_left(clock):
 
     with pytest.raises(ServerBusyError):
         with_retry(slow_then_fail, "https://a/api", deadline=fetch.Deadline(100))
-    assert timeouts == [60, 55]                     # 100 - 40 - 5 = 55 s left for try 2
-    assert ox.settings.requests_timeout == 60       # restored
+    assert timeouts == [100, 55]                    # all 100 s left, then 100 - 40 - 5 = 55 s for try 2
+    assert ox.settings.requests_timeout == 300      # restored
 
 
 def test_osmnx_pause_past_the_deadline_ends_in_busy(clock):
@@ -346,7 +350,7 @@ def test_fast_failures_still_get_three_tries(clock):
 
 def test_graph_and_features_share_one_budget(monkeypatch, clock):
     def slow_graph(*a, **k):
-        clock["t"] += 145                           # succeeds, but uses nearly all of the budget
+        clock["t"] += fetch.DOWNLOAD_BUDGET_S - 5   # uses nearly all of the budget
         raise ox._errors.InsufficientResponseError("none")
     calls = []
 
@@ -358,9 +362,27 @@ def test_graph_and_features_share_one_budget(monkeypatch, clock):
     with pytest.raises(AreaError):                  # the graph call's own error still surfaces
         fetch._download(None, {})
 
-    monkeypatch.setattr(fetch.ox, "graph_from_polygon", lambda *a, **k: (clock.__setitem__("t", clock["t"] + 145)
-                                                                       or nx.MultiDiGraph()))
+    monkeypatch.setattr(fetch.ox, "graph_from_polygon",
+                        lambda *a, **k: (clock.__setitem__("t", clock["t"] + fetch.DOWNLOAD_BUDGET_S - 5)
+                                         or nx.MultiDiGraph()))
     monkeypatch.setattr(fetch, "simplify_with_way_parts", lambda g: g)
     with pytest.raises(ServerBusyError):            # 5 s left: no time for the features request
         fetch._download(None, {})
     assert calls == []
+
+
+def test_download_reports_its_steps_and_retries(monkeypatch, clock):
+    tries = []
+
+    def graph(*a, **k):
+        tries.append(1)
+        if len(tries) == 1:
+            raise busy()
+        return nx.MultiDiGraph()
+    monkeypatch.setattr(fetch.ox, "graph_from_polygon", graph)
+    monkeypatch.setattr(fetch.ox, "features_from_polygon", lambda *a, **k: "features")
+    monkeypatch.setattr(fetch, "simplify_with_way_parts", lambda g: g)
+    steps = []
+    fetch._download(None, {}, steps.append)
+    assert steps == [fetch.STEP_STREETS, f"{fetch.STEP_STREETS} (map server busy, try 2 of 3)",
+                     fetch.STEP_FEATURES]

@@ -22,7 +22,7 @@ TODAY = date(2026, 11, 16)
 @pytest.fixture
 def net(monkeypatch, area_data):
     monkeypatch.setattr(pipeline, "area_from_place", lambda name: area_data.area)
-    monkeypatch.setattr(pipeline, "fetch_area", lambda area, params: area_data)
+    monkeypatch.setattr(pipeline, "fetch_area", lambda area, params, **kw: area_data)
     return pipeline.score_place("Grid")
 
 
