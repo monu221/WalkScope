@@ -21,6 +21,7 @@ import streamlit as st
 from streamlit_folium import st_folium
 
 from walkscope import pipeline
+from walkscope.completeness import completeness
 from walkscope.config import load_indicator_params
 from walkscope.fetch import AreaError, ServerBusyError
 from walkscope.mapview import legend_html, make_map
@@ -260,7 +261,7 @@ def render_summary(net: Network, view: View) -> None:
     roads = seg[seg["scored"] & ~pedestrian_only(seg)]
     tagged = length_weighted_mean(roads["speed_tagged_share"], roads["length"])
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Area", f"{net.area.area / 1e6:.1f} km²")           # net.area is in metres (UTM)
     c2.metric("Street network", f"{summary.road_km + summary.pedestrian_km:.1f} km",
               help="Length of all scored streets, footways and paths.")
@@ -271,9 +272,26 @@ def render_summary(net: Network, view: View) -> None:
               help=f"Share of the scored network length. Their average {view.label.lower()} is "
                    f"{_fmt(summary.pedestrian_mean, '.0f')}; on traffic stress and infrastructure "
                    "they score 100 by definition.")
-    c5.metric("Speed limit tagged", _fmt(tagged, ".0%"),
-              help="Share of road length with a speed limit in OpenStreetMap; the rest use default speeds.")
-    # Data-completeness panel goes here (build step 6).
+    render_completeness(seg, tagged)
+
+
+def render_completeness(seg: pd.DataFrame, speed_tagged: float) -> None:
+    """Data completeness (docs/method.md): how much of the scores rests on data, not assumptions."""
+    data = completeness(seg, _params()["pedestrian_only_highways"])
+    with st.container(border=True):
+        st.markdown("**Data completeness** · share of network length where OpenStreetMap has the data. "
+                    "Where it is missing, scores use stated assumptions, so a low score may reflect "
+                    "missing data rather than a bad street.")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Overall", _fmt(data.mean, ".0%"), help="Mean of sidewalk, kerb and lighting.")
+        c2.metric("Sidewalk known", _fmt(data.sidewalk, ".0%"),
+                  help="Roads only. Unknown sidewalks score 50 (unknown).")
+        c3.metric("Kerb data nearby", _fmt(data.kerb, ".0%"),
+                  help="A kerb point with a known type within 50 m. Without one, kerbs score 50 (unknown).")
+        c4.metric("Lighting tagged", _fmt(data.lit, ".0%"), help="Unknown lighting scores 50 (unknown).")
+        c5.metric("Speed limit tagged", _fmt(speed_tagged, ".0%"),
+                  help="Share of road length with a speed limit in OpenStreetMap; the rest use default "
+                       "speeds. Not part of the overall figure.")
 
 
 def weakest_table(net: Network, view: View) -> pd.DataFrame:

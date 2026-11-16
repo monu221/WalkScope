@@ -183,7 +183,10 @@ def test_app_scores_a_place(offline):
     assert at.metric[2].label == "Traffic stress, roads"
     assert at.metric[2].value == "75"                         # roads only, footways left out
     assert at.metric[3].value == "57%"                        # footways: 4 of 7 segments by length
-    assert at.metric[4].value == "0%"                         # no maxspeed tags in the fixture
+    # Data completeness: no sidewalk, lit or maxspeed tags in the fixture.
+    labels = [m.label for m in at.metric[4:]]
+    assert labels == ["Overall", "Sidewalk known", "Kerb data nearby", "Lighting tagged", "Speed limit tagged"]
+    assert at.metric[5].value == "0%" and at.metric[7].value == "0%" and at.metric[8].value == "0%"
     table = at.dataframe[0].value
     assert list(table.columns) == ["Street", "Road type", "Traffic stress", "Speed used", "Source"]
     assert table["Street"].tolist() == ["Row 0 Street", "Row 1 Street", "Row 2 Street"]

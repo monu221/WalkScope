@@ -7,6 +7,7 @@ from typing import Any, Callable
 import geopandas as gpd
 from shapely.geometry.base import BaseGeometry
 
+from walkscope.completeness import data_flags
 from walkscope.config import load_indicator_params, load_personas
 from walkscope.fetch import AreaError, area_from_place, fetch_area
 from walkscope.indicators.amenity import amenity_distances, amenity_score, category_scores
@@ -49,7 +50,8 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None,
     Adds indicator columns to `network.segments`. So far: `traffic_stress`,
     `speed_kmh`, `speed_min_kmh`, `speed_max_kmh`, `speed_tagged`, `speed_tagged_share`; `infrastructure` (general-adult mix) and its
     sub-scores `infra_sidewalk`, `infra_crossing`, `infra_kerb`,
-    `infra_surface`, `infra_lit`, `infra_base`; `connectivity` and
+    `infra_surface`, `infra_lit`, `infra_base`; data-completeness flags
+    `data_sidewalk`, `data_kerb`, `data_lit`; `connectivity` and
     `intersection_density` (per km²); `transit`, `transit_distance_m` (any
     stop) and `station_distance_m` (rail station), NaN beyond reach; `amenity`, and per category its score
     `amenity_<category>` and distance `amenity_<category>_m` (NaN beyond reach).
@@ -83,6 +85,8 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None,
     subscores = infrastructure_subscores(seg, crossings, kerbs, params)
     seg[subscores.columns] = subscores
     seg["infrastructure"] = infrastructure_score(subscores, load_personas()[DEFAULT_PERSONA])
+    flags = data_flags(seg, kerbs, params)
+    seg[flags.columns] = flags
 
     seg["intersection_density"] = intersection_density(net.nodes, seg, params)
     seg["connectivity"] = connectivity_score(net.nodes, seg, params)

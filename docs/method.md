@@ -189,13 +189,15 @@ The weakest-streets table lists the lowest-scoring segments that have a `name`. 
 
 ## Data completeness
 
-The tool shows, per area, the share of in-area segments that have:
+The tool shows, per area, the share of the scored network **length** (the rule in "Area summaries") where:
 
-- a `sidewalk` tag (pedestrian-only segments are left out of this share, because they need no sidewalk)
-- a `kerb` value within 50 m
-- a `lit` tag
+- the **sidewalk is known**: `sidewalk`, or the `sidewalk:left/right/both` side tags, give a value in the config. Roads only: pedestrian-only segments are left out of this share, because they need no sidewalk. A tag with a value the config doesn't know (e.g. `sidewalk=yes`) counts as missing, because the sidewalk then scores the missing 50.
+- a **kerb** node with a known `kerb` value lies within 50 m
+- **lighting is known**: a `lit` value in the config
 
-It also shows the mean of the three as one headline figure. This way a low score caused by missing data is not mistaken for a bad street.
+It also shows the mean of the three as one headline figure. This way a low score caused by missing data is not mistaken for a bad street. Each segment carries the flags `data_sidewalk`, `data_kerb` and `data_lit`; the figures come from `completeness.completeness`.
+
+The share of road length with a tagged speed limit is shown next to these, but is not part of the headline figure.
 
 ## Known limitation
 
