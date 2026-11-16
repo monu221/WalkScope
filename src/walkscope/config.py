@@ -120,6 +120,8 @@ def load_indicator_params(path: str | Path | None = None) -> dict[str, Any]:
     conn = params["connectivity"]
     if not conn["density_zero"] < conn["density_full"]:
         raise ConfigError("connectivity: density_zero must be below density_full")
+    if not isinstance(conn.get("count_pedestrian_only"), bool):
+        raise ConfigError("connectivity.count_pedestrian_only: must be true or false")
 
     transit = params["transit"]
     if not transit["full_score_m"] < transit["zero_score_m"]:

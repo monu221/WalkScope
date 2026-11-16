@@ -9,6 +9,7 @@ from shapely.geometry.base import BaseGeometry
 
 from walkscope.config import load_indicator_params, load_personas
 from walkscope.fetch import AreaError, area_from_place, fetch_area
+from walkscope.indicators.connectivity import connectivity_score, intersection_density
 from walkscope.indicators.infrastructure import (
     infrastructure_score,
     infrastructure_subscores,
@@ -34,7 +35,8 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None) -> Netw
     Adds indicator columns to `network.segments`. So far: `traffic_stress`,
     `speed_kmh`, `speed_tagged`; `infrastructure` (general-adult mix) and its
     sub-scores `infra_sidewalk`, `infra_crossing`, `infra_kerb`,
-    `infra_surface`, `infra_lit`, `infra_base`.
+    `infra_surface`, `infra_lit`, `infra_base`; `connectivity` and
+    `intersection_density` (per km²).
     Raises AreaError (too large, no streets) or fetch.ServerBusyError.
     """
     params = params or load_indicator_params()
@@ -60,6 +62,9 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None) -> Netw
     subscores = infrastructure_subscores(seg, crossings, kerbs, params)
     seg[subscores.columns] = subscores
     seg["infrastructure"] = infrastructure_score(subscores, load_personas()[DEFAULT_PERSONA])
+
+    seg["intersection_density"] = intersection_density(net.nodes, seg, params)
+    seg["connectivity"] = connectivity_score(net.nodes, seg, params)
     return net
 
 

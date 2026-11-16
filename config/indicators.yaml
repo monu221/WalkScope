@@ -46,6 +46,10 @@ amenity:
 connectivity:
   radius_m: 400              # straight-line radius around the measuring node
   min_street_count: 3        # a node is an intersection if this many streets meet
+  # Streets for counting intersections: never routing-only segments; footways,
+  # paths etc. only if this is true. With them, footway meshes in parks and
+  # courtyards push most city segments far past density_full (see method.md).
+  count_pedestrian_only: false
   density_zero: 30           # intersections per km² that score 0
   density_full: 150          # intersections per km² that score 100
 

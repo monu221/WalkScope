@@ -43,6 +43,12 @@ def test_score_place_adds_infrastructure_columns(offline):
     assert other_rows["infrastructure"].eq(30).all()
 
 
+def test_score_place_adds_connectivity_columns(offline):
+    seg = pipeline.score_place("Grid").segments
+    assert seg["intersection_density"].eq(0).all()      # grid has no road with 3 roads meeting
+    assert seg["connectivity"].between(0, 100).all()
+
+
 def test_too_large_area_is_refused(monkeypatch):
     monkeypatch.setattr(pipeline, "area_from_place", lambda name: box(13.0, 52.3, 13.8, 52.7))  # ~Berlin
     with pytest.raises(AreaError, match="up to 5 km²"):

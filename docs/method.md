@@ -63,9 +63,11 @@ Of the 1,399 roads (non-pedestrian segments) in the area before driveways and pa
 
 ### Connectivity
 
-- Intersections are network nodes where three or more streets meet.
+- Intersections are network nodes where three or more streets meet. **Streets** here are the roads only: routing-only segments (separately drawn sidewalks and crossings, driveways, parking aisles, corridors) and pedestrian-only segments (footways, paths, steps) are not counted (`count_pedestrian_only: false` in the config).
 - Count the intersections within a **400 m straight-line radius** of the measuring node and divide by the circle's area to get intersections per km².
 - Score is linear from **30 per km² (0 points) to 150 per km² (100 points)**, clipped to 0–100.
+
+Why roads only: the 30–150 scale is a street-network intersection density. Counting every way that meets at a node (OSMnx's `street_count`) made every scored segment score 100 in all three test areas, at about 650–1,400 intersections per km², because each sidewalk–crossing junction counts. Leaving out only the routing-only ways still gave a median of 215 (Kreuzberg), 511 (St. Pauli) and 545 (Aachen) per km², with 86–100 % of segments at 100, because footways in parks and courtyards form dense meshes. Counting roads only gives medians of 82, 119 and 147 per km² (10th–90th percentile about 55–190), which spreads across the scale. Footway shortcuts still count for amenity and transit access, which use walking distances along the full network.
 
 ### Pedestrian infrastructure
 
