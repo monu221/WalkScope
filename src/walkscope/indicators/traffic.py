@@ -3,7 +3,9 @@
 Rules (docs/method.md, values in config/indicators.yaml):
 - pedestrian-only segments score 100;
 - otherwise the speed limit is mapped through a piecewise-linear curve,
-  using `maxspeed` or, if missing/unreadable, the German default for the road class;
+  using `maxspeed` or, if missing/unreadable, the default for the road class;
+- that speed score is multiplied by the road-class factor (a stand-in for
+  traffic volume: primary 0.6, residential 1.0, ...);
 - each lane above `lanes_free` costs `lane_penalty` points;
 - the result is clipped to 0-100.
 """
@@ -75,6 +77,12 @@ def effective_speed(segments: pd.DataFrame, params: dict[str, Any]) -> pd.DataFr
     )
 
 
+def class_factor(highway: Any, factors: dict[str, float]) -> float:
+    """Road-class factor; `_link` roads use their parent class, merged segments the lowest factor."""
+    classes = road_classes(highway)
+    return min((float(factors.get(c, 1.0)) for c in classes), default=1.0)
+
+
 def speed_score(speed_kmh: pd.Series | np.ndarray, curve: list[list[float]]) -> np.ndarray:
     """Map speeds to 0-100 along the curve; flat beyond its first and last points."""
     xs = [p[0] for p in curve]
@@ -90,7 +98,8 @@ def traffic_score(segments: pd.DataFrame, params: dict[str, Any]) -> pd.Series:
     ).astype(bool)
 
     speed = effective_speed(segments, params)["speed_kmh"]
-    score = pd.Series(speed_score(speed, cfg["speed_curve"]), index=segments.index)
+    factor = segments["highway"].map(lambda h: class_factor(h, cfg["class_factor"])).astype(float)
+    score = pd.Series(speed_score(speed, cfg["speed_curve"]), index=segments.index) * factor
 
     lanes = segments["lanes"].map(parse_lanes).astype(float)
     extra = (lanes - cfg["lanes_free"]).clip(lower=0).fillna(0)

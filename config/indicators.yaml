@@ -122,6 +122,16 @@ traffic_stress:
     - [30, 75]
     - [50, 30]
     - [70, 0]
+  # Road class as a stand-in for traffic volume: the speed score is multiplied
+  # by this factor before the lane penalty. `_link` roads use their parent
+  # class; a merged segment uses its lowest factor; unlisted classes
+  # (residential, living_street, service, unclassified, ...) use 1.0.
+  # Pedestrian-only segments score pedestrian_only_score regardless.
+  class_factor:
+    trunk: 0.5
+    primary: 0.6
+    secondary: 0.7
+    tertiary: 0.85
   lanes_free: 2              # no penalty up to this many lanes
   lane_penalty: 10           # points off for each lane above lanes_free
   # Used when maxspeed is missing. German urban defaults by road class, except

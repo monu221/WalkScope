@@ -143,6 +143,10 @@ def load_indicator_params(path: str | Path | None = None) -> dict[str, Any]:
     speeds = [p[0] for p in curve]
     if len(curve) < 2 or any(len(p) != 2 for p in curve) or speeds != sorted(set(speeds)):
         raise ConfigError("traffic_stress.speed_curve: needs 2+ [speed, score] points with rising speeds")
+    factors = params["traffic_stress"].get("class_factor")
+    if not isinstance(factors, dict) or not all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 1 for v in factors.values()):
+        raise ConfigError("traffic_stress.class_factor: needs a mapping of road class to a factor between 0 and 1")
     if "other" not in params["traffic_stress"]["default_speed_kmh"]:
         raise ConfigError("traffic_stress.default_speed_kmh: needs an 'other' fallback")
 

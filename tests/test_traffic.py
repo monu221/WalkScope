@@ -6,6 +6,7 @@ import pytest
 from walkscope.config import load_indicator_params
 from walkscope.indicators.traffic import (
     MPH_TO_KMH,
+    class_factor,
     default_speed,
     effective_speed,
     parse_lanes,
@@ -66,17 +67,23 @@ def test_default_speed(highway, expected):
 
 CASES = [
     # name, highway, maxspeed, lanes, expected score
+    # speed score (10 -> 100, 30 -> 75, 50 -> 30, 70 -> 0) x class factor - 10 per lane above 2
     ("res 30", "residential", "30", None, 75),
-    ("main 50", "primary", "50", None, 30),
-    ("main default", "primary", None, None, 30),
-    ("res default", "residential", None, None, 75),    # residential default is 30
+    ("main 50", "primary", "50", None, 30 * 0.6),
+    ("main default", "primary", None, None, 30 * 0.6),
+    ("main 30", "primary", "30", None, 75 * 0.6),
+    ("main 30 4 lanes", "primary", "30", "4", 75 * 0.6 - 20),     # e.g. Stresemannstrasse
+    ("primary link", "primary_link", "30", None, 75 * 0.6),       # link: parent class
+    ("res default", "residential", None, None, 75),                # residential default is 30
     ("zone 30", "residential", "DE:zone30", None, 75),
-    ("40 between", "secondary", "40", None, 52.5),
+    ("40 between", "secondary", "40", None, 52.5 * 0.7),
+    ("tertiary 50", "tertiary", "50", None, 30 * 0.85),
+    ("unclassified 30", "unclassified", "30", None, 75),          # unlisted class: factor 1
+    ("merged", ["residential", "primary"], "30", None, 75 * 0.6), # lowest factor
     ("living street", "living_street", None, None, 100),
     ("trunk default", "trunk", None, None, 0),
-    ("4 lanes", "primary", "50", "4", 10),
-    ("6 lanes", "primary", "50", "6", 0),               # clipped at 0
-    ("2 lanes", "primary", "50", "2", 30),               # no penalty up to 2
+    ("4 lanes", "primary", "50", "4", 0),                          # 18 - 20, clipped at 0
+    ("2 lanes", "primary", "50", "2", 30 * 0.6),                   # no penalty up to 2
     ("footway", "footway", None, None, 100),
     ("steps", "steps", None, None, 100),
     ("path", "path", "50", "4", 100),                   # pedestrian-only ignores speed and lanes
@@ -102,6 +109,21 @@ def test_traffic_score_cases(cases):
 def test_residential_30_beats_main_road_50(cases):
     scores = traffic_score(cases, PARAMS)
     assert scores["res 30"] > scores["main 50"]
+
+
+def test_primary_scores_below_residential_at_same_speed(cases):
+    scores = traffic_score(cases, PARAMS)
+    assert scores["main 30"] < scores["res 30"]
+    assert scores["main 30 4 lanes"] < scores["res default"]
+
+
+@pytest.mark.parametrize("highway, expected", [
+    ("primary", 0.6), ("primary_link", 0.6), ("trunk_link", 0.5), ("secondary", 0.7),
+    ("tertiary", 0.85), ("residential", 1.0), ("living_street", 1.0), ("footway", 1.0),
+    (["tertiary", "secondary"], 0.7), (None, 1.0),
+])
+def test_class_factor(highway, expected):
+    assert class_factor(highway, PARAMS["traffic_stress"]["class_factor"]) == expected
 
 
 def test_scores_in_range(cases):

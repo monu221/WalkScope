@@ -9,7 +9,7 @@ Each street segment gets five indicator scores from 0 to 100, combined as a weig
 | Amenity access | How many everyday categories (groceries, school, pharmacy, park, café, doctor) are within a 10-minute walk along the network | Points of interest and the walking network |
 | Connectivity | Intersection density within 400 m; short blocks score higher | Walking network |
 | Pedestrian infrastructure | Sidewalk present, marked crossings nearby, pedestrian-only street | `sidewalk`, `crossing`, `highway=footway/pedestrian` tags |
-| Traffic stress | Road class and speed limit; a 30 km/h residential street scores above a 50 km/h main road | `highway`, `maxspeed`, `lanes` tags |
+| Traffic stress | Speed limit, road class (as a stand-in for traffic volume) and lanes; a residential street scores above a main road at the same speed | `highway`, `maxspeed`, `lanes` tags |
 | Transit access | Walking distance to the nearest bus or rail stop | `public_transport` and `railway` tags |
 
 ## Study area and measuring point
@@ -110,8 +110,13 @@ The infrastructure score depends on the persona, but its sub-scores do not; they
 - Pedestrian-only segments score **100**.
 - Speed comes from `maxspeed`. If it is missing, the **default speed for the road class** (in the config) is used: the German urban default (50 km/h) for most classes, but **30 km/h for residential streets** (see below). Zone values such as `DE:zone30` and `DE:urban` are translated using the config. If a segment has several values, the highest one is used.
 - Speed score, linear between these points: 10 km/h → 100, 30 km/h → 75, 50 km/h → 30, 70 km/h → 0.
+- **Road-class factor:** the speed score is multiplied by a factor for the road class: trunk 0.5, primary 0.6, secondary 0.7, tertiary 0.85; residential, living street and every other class 1.0. `_link` roads use their parent class's factor; a merged segment uses the lowest factor among its classes.
 - Lanes: −10 points for each lane above 2 (from `lanes`). If `lanes` is missing, there is no penalty.
 - Clipped to 0–100.
+
+So score = speed score × class factor − lane penalty, clipped to 0–100. At 30 km/h with 2 lanes: residential 75, tertiary 64, secondary 53, primary 45, trunk 38. At 50 km/h: residential 30, tertiary 26, secondary 21, primary 18, trunk 15.
+
+**Why a road-class factor.** Speed alone treats a 30 km/h main road like a 30 km/h residential street, but the main road carries far more traffic: more noise, more vehicles to cross between, more turning traffic at junctions. OSM has no traffic counts, so the road class stands in for traffic volume. Without the factor, Stresemannstraße in Sternschanze (primary, 4 lanes, tagged 30) scored 55, better than residential streets tagged 50 (30). With it, it scores 25 (75 × 0.6 − 20). The lane penalty also reflects volume, so a multi-lane main road is marked down by both; this is intended, since lanes add crossing distance as well as traffic. The average primary-road score in Sternschanze fell from 62 to 32; residential streets are unchanged.
 
 **Residential default of 30 km/h.** The legal urban default in Germany is 50 km/h, but most residential streets are in 30 zones. Among residential and living-street segments that do have a `maxspeed` tag, the share at 30 km/h or lower is:
 
