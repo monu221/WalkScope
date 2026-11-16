@@ -28,6 +28,7 @@ from walkscope.indicators.amenity import amenity_score, category_scores, distanc
 from walkscope.indicators.infrastructure import infrastructure_score, points_near
 from walkscope.network import Network, nearest_nodes, walk_distances
 from walkscope.pipeline import DEFAULT_PERSONA
+from walkscope.scoring import display_name, length_weighted_mean
 from walkscope.tags import is_pedestrian_only
 
 CROSSING = "crossing"
@@ -142,3 +143,31 @@ def apply_edits(net: Network, edits: Iterable[Edit], params: dict[str, Any]) -> 
 def check_edit(net: Network, edits: list[Edit], edit: Edit, params: dict[str, Any]) -> None:
     """Raise ScenarioError if `edit` can't be placed (checked on a scratch copy)."""
     apply_edits(net, [*edits, edit], params)
+
+
+CHANGE_COLUMNS = ["Street", "Before", "After", "Change"]
+
+
+def changed_streets(before: pd.DataFrame, after: pd.DataFrame, changed: pd.Index, column: str,
+                    n: int = 10) -> pd.DataFrame:
+    """Named streets whose `column` changed, most improved first: Street, Before, After, Change.
+
+    Per street, the length-weighted mean over its changed scored segments,
+    rounded; streets whose rounded change is 0 are left out.
+    """
+    ids = changed.intersection(before.index[before["scored"]])
+    rows = pd.DataFrame({
+        "Street": before.loc[ids, "name"].map(display_name),
+        "length": before.loc[ids, "length"],
+        "Before": before.loc[ids, column],
+        "After": after.loc[ids, column],
+    }).dropna(subset=["Street"])
+    if rows.empty:
+        return pd.DataFrame(columns=CHANGE_COLUMNS)
+    by_street = rows.groupby("Street").apply(
+        lambda g: pd.Series({"Before": length_weighted_mean(g["Before"], g["length"]),
+                             "After": length_weighted_mean(g["After"], g["length"])}),
+        include_groups=False).reset_index()
+    by_street["Change"] = by_street["After"] - by_street["Before"]
+    by_street = by_street[by_street["Change"].round() != 0].sort_values("Change", ascending=False)
+    return by_street.head(n).round().astype({"Before": int, "After": int, "Change": int})[CHANGE_COLUMNS]

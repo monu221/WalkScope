@@ -25,15 +25,16 @@ from shapely.geometry.base import BaseGeometry
 from streamlit_folium import st_folium
 
 from walkscope import pipeline
-from walkscope.completeness import Completeness, completeness, persona_gaps
+from walkscope.completeness import Completeness, caution_message, completeness
 from walkscope.config import Persona, load_indicator_params, load_personas
 from walkscope.drawing import draw_map, drawn_area_name, polygon_from_drawings
 from walkscope.fetch import AreaError, ServerBusyError
 from walkscope.mapview import colour_range, legend_html, make_map
 from walkscope.network import Network
-from walkscope.scenario import AMENITY, CROSSING, Edit, ScenarioError, apply_edits, check_edit
-from walkscope.scoring import (STREET_DESIGN, apply_persona, area_summary, display_name, length_weighted_mean,
-                               weakest)
+from walkscope.report import build_report, rounded_change, to_markdown, to_pdf
+from walkscope.scenario import AMENITY, CROSSING, Edit, ScenarioError, apply_edits, changed_streets, check_edit
+from walkscope.scoring import (INDICATOR_LABELS, STREET_DESIGN, apply_persona, area_summary, display_name,
+                               length_weighted_mean, weakest, weakest_indicator)
 from walkscope.tags import is_pedestrian_only
 
 log = logging.getLogger(__name__)
@@ -170,13 +171,6 @@ def amenity_popup() -> dict[str, Callable[[pd.DataFrame], pd.Series]]:
             for c in _categories()}
 
 
-INDICATOR_LABELS = {
-    "amenity": "Amenity access",
-    "connectivity": "Connectivity",
-    "infrastructure": "Pedestrian infrastructure",
-    "traffic_stress": "Traffic stress",
-    "transit": "Transit access",
-}
 INDICATOR_SHORT = {
     "amenity": "amenity",
     "connectivity": "connectivity",
@@ -188,14 +182,6 @@ INDICATOR_SHORT = {
 
 def _indicator_line(column: str) -> Callable[[pd.DataFrame], pd.Series]:
     return lambda seg: seg[column].round().astype(int).astype(str)
-
-
-def weakest_indicator(seg: pd.DataFrame, columns=tuple(INDICATOR_LABELS)) -> pd.Series:
-    """The lowest of the indicator scores in `columns`, e.g. 'Traffic stress 11', or why the segment scores 0."""
-    scores = seg[list(columns)]
-    lowest = scores.idxmin(axis=1)
-    text = lowest.map(INDICATOR_LABELS) + " " + scores.min(axis=1).round().astype(int).astype(str)
-    return text.where(~seg["impassable"], "impassable for this persona (steps)")
 
 
 @dataclass(frozen=True)
@@ -390,13 +376,7 @@ PERSONA_COLUMNS = ("score", "infrastructure")
 
 def caution_text(data: Completeness, persona: Persona) -> str | None:
     """Caution when data the persona relies on is sparse (docs/method.md, "Data completeness")."""
-    gaps = persona_gaps(data, persona, _params()["completeness"]["caution_below"])
-    if not gaps:
-        return None
-    missing = " and ".join(f"{label} cover only {share:.0%}" for label, share in gaps)
-    return (f"**Less reliable for {persona.label.lower()}:** {missing} of the network. Where that data is "
-            "missing, its part of the infrastructure score is set to 50 (unknown), so scores here rest "
-            "partly on assumptions, not on the streets themselves.")
+    return caution_message(data, persona, _params()["completeness"]["caution_below"])
 
 
 def render_caution(data: Completeness, persona: Persona) -> None:
@@ -579,28 +559,6 @@ def clear_edits(place: str) -> None:
     st.session_state.pop("whatif_error", None)
 
 
-def changed_streets(before: pd.DataFrame, after: pd.DataFrame, changed: pd.Index, column: str) -> pd.DataFrame:
-    """Named streets whose score changed: Street, Before, After, Change (by street: its mean, length-weighted)."""
-    ids = changed.intersection(before.index[before["scored"]])
-    if len(ids) == 0:
-        return pd.DataFrame(columns=["Street", "Before", "After", "Change"])
-    rows = pd.DataFrame({
-        "Street": before.loc[ids, "name"].map(display_name),
-        "length": before.loc[ids, "length"],
-        "Before": before.loc[ids, column],
-        "After": after.loc[ids, column],
-    }).dropna(subset=["Street"])
-    if rows.empty:
-        return pd.DataFrame(columns=["Street", "Before", "After", "Change"])
-    by_street = rows.groupby("Street").apply(
-        lambda g: pd.Series({"Before": length_weighted_mean(g["Before"], g["length"]),
-                             "After": length_weighted_mean(g["After"], g["length"])}),
-        include_groups=False).reset_index()
-    by_street["Change"] = by_street["After"] - by_street["Before"]
-    by_street = by_street[by_street["Change"].round() != 0].sort_values("Change", ascending=False)
-    return by_street.head(CHANGED_ROWS).round().astype({"Before": int, "After": int, "Change": int})
-
-
 def render_whatif(net: Network, place: str, before: pd.DataFrame, persona: Persona, view: View,
                   edits: list[Edit]) -> tuple[str, str, pd.DataFrame]:
     """The what-if panel. Returns (click mode, "before"/"after", segments the map and table show)."""
@@ -637,11 +595,11 @@ def render_whatif(net: Network, place: str, before: pd.DataFrame, persona: Perso
         improved = scored[(after.loc[scored, view.column] - before.loc[scored, view.column]) > 0.5]
         m1, m2, m3 = st.columns(3)
         m1.metric(f"{view.label}, roads: before", _fmt(sb.road_mean, ".1f"))
-        m2.metric("After", _fmt(sa.road_mean, ".1f"), delta=_fmt(sa.road_mean - sb.road_mean, "+.1f"))
+        m2.metric("After", _fmt(sa.road_mean, ".1f"), delta=rounded_change(sb.road_mean, sa.road_mean))
         m3.metric("Segments improved", f"{len(improved)}",
                   help=f"{before.loc[improved, 'length'].sum() / 1000:.1f} km, of which "
                        f"{int((~pmask.loc[improved]).sum())} on roads.")
-        table = changed_streets(before, after, changed, view.column)
+        table = changed_streets(before, after, changed, view.column, n=CHANGED_ROWS)
         if table.empty:
             st.caption(f"No named street's {view.label.lower()} changed.")
         else:
@@ -650,6 +608,38 @@ def render_whatif(net: Network, place: str, before: pd.DataFrame, persona: Perso
         shown = st.segmented_control("Map and table show", list(WHATIF_SHOW), format_func=WHATIF_SHOW.get,
                                      default="after", key="whatif_show") or "after"
     return mode, shown, after if shown == "after" else before
+
+
+# --- Report ---------------------------------------------------------------------------
+
+def file_stem(place: str) -> str:
+    """'Sternschanze, Hamburg' -> 'walkscope-sternschanze-hamburg' (ASCII letters, digits and dashes)."""
+    import re
+    import unicodedata
+    ascii_name = unicodedata.normalize("NFKD", place).encode("ascii", "ignore").decode()
+    return "walkscope-" + (re.sub(r"[^a-z0-9]+", "-", ascii_name.lower()).strip("-") or "area")
+
+
+def render_report(net: Network, place: str, persona: Persona, edits: list[Edit], relative: bool) -> None:
+    """Sidebar download buttons. The report is made once per set of inputs (about 0.5 s) and kept in
+    session state, so other reruns don't rebuild it."""
+    key = (place, persona.key, tuple(edits), relative)
+    stored = st.session_state.get("report")
+    if stored is None or stored[0] != key:
+        report = build_report(net, place, persona, edits, relative, params=_params())
+        stored = (key, to_pdf(report), to_markdown(report))
+        st.session_state["report"] = stored
+    _, pdf, md = stored
+    st.divider()
+    st.subheader("Report")
+    st.caption(f"For {persona.label.lower()}" + (", with the what-if scenario" if edits else "")
+               + ": map, averages, indicators, weakest streets, data completeness"
+               + (", before and after" if edits else "") + ".")
+    stem = file_stem(place)
+    st.download_button("Download report (PDF)", data=pdf, file_name=f"{stem}.pdf", mime="application/pdf",
+                       type="primary", width="stretch", on_click="ignore", key="download_pdf")
+    st.download_button("Download as Markdown", data=md, file_name=f"{stem}.md", mime="text/markdown",
+                       width="stretch", on_click="ignore", key="download_md")
 
 
 def render_about() -> None:
@@ -725,6 +715,8 @@ def main() -> None:
         render_weakest(key, view, table, design_only)
     if click and handle_click(net, place, edits, mode, click):
         st.rerun()
+    with st.sidebar:
+        render_report(net, place, persona, edits, relative)
     render_about()
 
 

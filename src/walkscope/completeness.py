@@ -97,6 +97,17 @@ def completeness(segments: pd.DataFrame, pedestrian_only: Iterable[str]) -> Comp
     )
 
 
+def caution_message(data: Completeness, persona: Persona, threshold: float) -> str | None:
+    """Caution text (Markdown) when data the persona relies on is sparse, or None."""
+    gaps = persona_gaps(data, persona, threshold)
+    if not gaps:
+        return None
+    missing = " and ".join(f"{label} cover only {share:.0%}" for label, share in gaps)
+    return (f"**Less reliable for {persona.label.lower()}:** {missing} of the network. Where that data is "
+            "missing, its part of the infrastructure score is set to 50 (unknown), so scores here rest "
+            "partly on assumptions, not on the streets themselves.")
+
+
 def persona_gaps(data: Completeness, persona: Persona, threshold: float) -> list[tuple[str, float]]:
     """Data the persona's scores rely on that covers less than `threshold` of the network.
 

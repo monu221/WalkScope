@@ -171,7 +171,7 @@ For each segment: score = sum of (indicator score × persona weight) / 100.
 
 ## Area summaries
 
-Every figure for a whole area (the summary row in the app, and later the report) follows one rule:
+Every figure for a whole area (the summary row in the app and the report) follows one rule:
 
 - **Weighted by segment length.** A 300 m street counts three times as much as a 100 m one. OSMnx splits streets at every junction, so an unweighted mean over-counts short pieces.
 - **Headline over roads only.** Footways, paths, pedestrian streets and steps (the pedestrian-only class) are left out of the headline average and reported separately as their **share of the scored network length**, with their own average. They are 43–63 % of segments in the Hamburg test areas and score 100 on traffic stress and on the base infrastructure score by definition, so including them pushed area means up regardless of how the roads are.
@@ -219,6 +219,10 @@ It also shows the mean of the three as one headline figure. This way a low score
 The share of road length with a tagged speed limit is shown next to these, but is not part of the headline figure.
 
 **Caution for the selected persona.** Each persona's infrastructure score relies on certain data: every persona on sidewalk tags (the base score), and depending on its infrastructure mix on kerb data (wheelchair), surface tags (wheelchair; the share of scored length with a known `sidewalk:surface` or `surface` value, judged like the surface sub-score) or lighting tags (night). If any of these covers less than **50 %** of the network (`completeness.caution_below` in `config/indicators.yaml`), the app shows a caution next to the score naming the data and its share: where it is missing, that part is scored 50 (unknown), so the score is less reliable. The caution shows on the walkability score and the infrastructure view, the two that use this data. The function is `completeness.persona_gaps`.
+
+## Report
+
+The report (`report.build_report`, rendered by `to_markdown` and `to_pdf` from the same data) covers the area for the selected persona: the walkability score map, the road average and the footway share (the "Area summaries" rule), the road average of each indicator with its persona weight, the 10 weakest named streets with their weakest indicator, the 5 weakest by street design only, data completeness with the persona caution, and, if items were added, the what-if scenario with before and after figures, the changed streets and a second map. The map image is drawn from the segment geometries (streets only, no basemap) with the colour scale chosen in the app; after a scenario, both maps use the *before* colour range. It ends with the OpenStreetMap credit.
 
 ## Known limitation
 

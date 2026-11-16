@@ -277,13 +277,13 @@ def test_app_persona_switch(offline):
     at = _run_app("Grid")
     persona = at.sidebar.selectbox(key="persona")
     assert persona.options == ["General adult", "Wheelchair user", "Child walking to school", "Night-time"]
-    assert "Weights: amenity 30" in at.sidebar.caption[-1].value
+    assert "Weights: amenity 30" in _persona_caption(at)
     general = at.metric[2].value
 
     at.sidebar.selectbox(key="persona").set_value("wheelchair").run()
     assert not at.exception
     assert at.subheader[0].value == "Grid · Wheelchair user"
-    caption = at.sidebar.caption[-1].value
+    caption = _persona_caption(at)
     assert "Infrastructure: base 50 %, kerb 25 %, surface 25 %" in caption
     assert "Impassable: steps" in caption
     assert at.metric[2].value != general
@@ -364,7 +364,7 @@ def test_app_whatif_crossing_before_and_after(offline):
     # Roads: 3 x 100 m at 30, 30, 70 -> 43.3; the crossing lifts Row 1 Street from 30 to 70 -> 56.7.
     assert _metric(at, "Pedestrian infrastructure, roads: before").value == "43.3"
     after = _metric(at, "After")
-    assert after.value == "56.7" and after.delta == "+13.3"
+    assert after.value == "56.7" and after.delta == "+13.4"            # difference of the shown values
     assert _metric(at, "Segments improved").value == "1"
     changes = at.dataframe[0].value
     assert changes.to_dict("records") == [{"Street": "Row 1 Street", "Before": 30, "After": 70, "Change": 40}]
@@ -454,3 +454,32 @@ def test_app_aachen_example_is_a_drawn_area(monkeypatch, area_data):
     assert pipeline.area_km2(scored[0]) == pytest.approx(1.5, abs=0.01)
     minx, miny, maxx, maxy = scored[0].bounds
     assert miny < 50.7747 < maxy and minx < 6.0839 < maxx          # the Dom is inside
+
+
+def _persona_caption(at):
+    return next(c.value for c in at.sidebar.caption if c.value.startswith("Weights:"))
+
+
+# --- Report (build step 10) -------------------------------------------------------
+
+def test_app_report_downloads(offline):
+    at = _run_app("Grid")
+    assert not at.exception
+    buttons = at.get("download_button")
+    assert len(buttons) == 2
+    assert "For general adult" in next(c.value for c in at.sidebar.caption if c.value.startswith("For "))
+
+
+def test_file_stem():
+    import importlib.util
+    import sys
+    from unittest import mock
+    # The app runs main() on import; import its helpers with Streamlit's page calls stubbed out.
+    spec = importlib.util.spec_from_file_location("walkscope_app", APP)
+    module = importlib.util.module_from_spec(spec)
+    with mock.patch("streamlit.set_page_config"), mock.patch.dict(sys.modules, {"walkscope_app": module}):
+        spec.loader.exec_module(module)
+    assert module.file_stem("Sternschanze, Hamburg") == "walkscope-sternschanze-hamburg"
+    assert module.file_stem("Aachen city centre (Dom and Markt, 1.5 km²)") == \
+        "walkscope-aachen-city-centre-dom-and-markt-1-5-km2"
+    assert module.file_stem("Düsseldorf-Altstadt") == "walkscope-dusseldorf-altstadt"

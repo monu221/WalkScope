@@ -35,6 +35,27 @@ def impassable_mask(segments: pd.DataFrame, persona: Persona) -> pd.Series:
     return segments["highway"].map(lambda h: bool(blocked & set(road_classes(h)))).astype(bool)
 
 
+# Display names of the indicator columns.
+INDICATOR_LABELS = {
+    "amenity": "Amenity access",
+    "connectivity": "Connectivity",
+    "infrastructure": "Pedestrian infrastructure",
+    "traffic_stress": "Traffic stress",
+    "transit": "Transit access",
+}
+
+
+def weakest_indicator(seg: pd.DataFrame, columns: Sequence[str] = tuple(INDICATOR_LABELS)) -> pd.Series:
+    """The lowest of the indicator scores in `columns`, e.g. 'Traffic stress 11', or why the segment scores 0.
+
+    Needs the `impassable` column from apply_persona.
+    """
+    scores = seg[list(columns)]
+    lowest = scores.idxmin(axis=1)
+    text = lowest.map(INDICATOR_LABELS) + " " + scores.min(axis=1).round().astype(int).astype(str)
+    return text.where(~seg["impassable"], "impassable for this persona (steps)")
+
+
 # Indicators that describe the street itself, which street design can change.
 STREET_DESIGN = ("traffic_stress", "infrastructure")
 

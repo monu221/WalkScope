@@ -59,7 +59,7 @@ WalkScope/
 | scenario | `add_crossing(net, segments, point, params)` / `add_amenity(...)` / `apply_edits(net, edits, params)` | → updated segments copy and changed ids, rescoring only affected ones |
 | drawing | `draw_map(outline)` / `polygon_from_drawings(drawings)` | → Folium map with draw tools / last drawn polygon (lat/lon) for `score_area` |
 | mapview | `make_map(segments, column)` | → Folium map coloured by score |
-| report | `build_report(...)` / `to_pdf(markdown)` | → Markdown string / PDF bytes |
+| report | `build_report(net, place, persona, edits)` / `to_markdown(report)` / `to_pdf(report)` | → Report / Markdown string / PDF bytes, rendered from the same Report |
 
 ## Build order
 
