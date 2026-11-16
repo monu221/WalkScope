@@ -90,3 +90,12 @@ def test_nearest_nodes():
                              index=[11, 22], crs=32633)
     points = gpd.GeoSeries([Point(90, 5), Point(10, -5), Point(49, 0)], index=[7, 8, 9], crs=32633)
     assert nearest_nodes(nodes, points).to_dict() == {7: 22, 8: 11, 9: 11}
+
+
+def test_nearest_nodes_with_duplicate_point_labels(net):
+    # A POI in two amenity categories appears twice with the same (element, id) label.
+    pts = net.pois.iloc[[0, 0, 1]]
+    assert pts.index.has_duplicates
+    ids = nearest_nodes(net.nodes, pts.geometry)
+    assert len(ids) == 3
+    assert ids.iloc[0] == ids.iloc[1]

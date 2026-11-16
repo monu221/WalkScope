@@ -13,6 +13,7 @@ from typing import Any, Iterable, Mapping
 
 import geopandas as gpd
 import networkx as nx
+import numpy as np
 import osmnx as ox
 import pandas as pd
 from shapely import STRtree
@@ -41,14 +42,19 @@ class Network:
 
 
 def nearest_nodes(nodes: gpd.GeoDataFrame, points: gpd.GeoSeries) -> pd.Series:
-    """Id of the nearest graph node to each point (both in the same metric CRS)."""
+    """Id of the nearest graph node to each point (both in the same metric CRS).
+
+    Matched by position, so `points` may have duplicate index labels (a POI
+    in two amenity categories appears twice with the same OSM id).
+    """
     if len(points) == 0:
         return pd.Series([], index=points.index, dtype=nodes.index.dtype)
     tree = STRtree(nodes.geometry.to_numpy())
     idx = tree.query_nearest(points.to_numpy(), return_distance=False, all_matches=False)
-    # idx[0] = position in `points`, idx[1] = position in `nodes`
-    ids = pd.Series(nodes.index.values[idx[1]], index=points.index[idx[0]])
-    return ids.loc[points.index]
+    # idx[0] = position in `points`, idx[1] = position in `nodes`; one match per point.
+    ids = np.empty(len(points), dtype=nodes.index.dtype)
+    ids[idx[0]] = nodes.index.values[idx[1]]
+    return pd.Series(ids, index=points.index)
 
 
 def walk_distances(graph: nx.MultiDiGraph, sources: Iterable[Any], cutoff: float) -> dict[Any, float]:
