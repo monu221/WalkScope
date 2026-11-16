@@ -108,10 +108,21 @@ The infrastructure score depends on the persona, but its sub-scores do not; they
 ### Traffic stress
 
 - Pedestrian-only segments score **100**.
-- Speed comes from `maxspeed`. If it is missing, the **German default speed for the road class** (in the config) is used. Zone values such as `DE:zone30` and `DE:urban` are translated using the config. If a segment has several values, the highest one is used.
+- Speed comes from `maxspeed`. If it is missing, the **default speed for the road class** (in the config) is used: the German urban default (50 km/h) for most classes, but **30 km/h for residential streets** (see below). Zone values such as `DE:zone30` and `DE:urban` are translated using the config. If a segment has several values, the highest one is used.
 - Speed score, linear between these points: 10 km/h → 100, 30 km/h → 75, 50 km/h → 30, 70 km/h → 0.
 - Lanes: −10 points for each lane above 2 (from `lanes`). If `lanes` is missing, there is no penalty.
 - Clipped to 0–100.
+
+**Residential default of 30 km/h.** The legal urban default in Germany is 50 km/h, but most residential streets are in 30 zones. Among residential and living-street segments that do have a `maxspeed` tag, the share at 30 km/h or lower is:
+
+| Area | Tagged segments | 30 km/h or lower | Share by length | Untagged segments |
+| --- | --- | --- | --- | --- |
+| Kreuzberg, Berlin | 438 | 374 (85 %) | 90 % | 0 |
+| St. Pauli, Hamburg | 335 | 292 (87 %) | 88 % | 53 |
+| Sternschanze, Hamburg | 91 | 88 (97 %) | 95 % | 3 |
+| Aachen city centre | 222 | 222 (100 %) | 100 % | 21 |
+
+Scored segments only; the 800 m download buffers give the same picture (89–97 %). Nearly all the rest are tagged 50. So an untagged residential street is assumed to be 30 km/h. This is an assumption: streets that are left untagged may differ from tagged ones, and the default for every other road class stays at 50 km/h.
 
 ### Transit access
 

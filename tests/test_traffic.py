@@ -49,7 +49,7 @@ def test_parse_lanes(value, expected):
 
 
 @pytest.mark.parametrize("highway, expected", [
-    ("residential", 50),
+    ("residential", 30),             # most residential streets are in 30 zones
     ("living_street", 7),
     ("trunk", 70),
     ("primary_link", 50),
@@ -69,7 +69,7 @@ CASES = [
     ("res 30", "residential", "30", None, 75),
     ("main 50", "primary", "50", None, 30),
     ("main default", "primary", None, None, 30),
-    ("res default", "residential", None, None, 30),    # German urban default is 50
+    ("res default", "residential", None, None, 75),    # residential default is 30
     ("zone 30", "residential", "DE:zone30", None, 75),
     ("40 between", "secondary", "40", None, 52.5),
     ("living street", "living_street", None, None, 100),
@@ -80,7 +80,7 @@ CASES = [
     ("footway", "footway", None, None, 100),
     ("steps", "steps", None, None, 100),
     ("path", "path", "50", "4", 100),                   # pedestrian-only ignores speed and lanes
-    ("bad tag", "residential", "signals", None, 30),    # unreadable -> default
+    ("bad tag", "residential", "signals", None, 75),    # unreadable -> default (30)
     ("very slow", "residential", "5", None, 100),       # flat below the curve
 ]
 
@@ -121,4 +121,4 @@ def test_traffic_score_on_network_segments(area_data):
     segments = build_network(area_data).segments
     scores = traffic_score(segments, PARAMS)
     assert (scores[segments["highway"] == "footway"] == 100).all()
-    assert (scores[segments["highway"] == "residential"] == 30).all()   # no maxspeed -> 50 km/h
+    assert (scores[segments["highway"] == "residential"] == 75).all()   # no maxspeed -> 30 km/h

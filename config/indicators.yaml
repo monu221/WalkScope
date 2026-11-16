@@ -124,14 +124,16 @@ traffic_stress:
     - [70, 0]
   lanes_free: 2              # no penalty up to this many lanes
   lane_penalty: 10           # points off for each lane above lanes_free
-  # Used when maxspeed is missing. German urban defaults by road class.
+  # Used when maxspeed is missing. German urban defaults by road class, except
+  # residential: 30, because 85-100 % of tagged residential streets in the test
+  # areas are 30 km/h or lower (evidence in docs/method.md).
   default_speed_kmh:
     trunk: 70
     primary: 50
     secondary: 50
     tertiary: 50
     unclassified: 50
-    residential: 50
+    residential: 30
     service: 30
     living_street: 7
     track: 30
