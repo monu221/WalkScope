@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+from dataclasses import dataclass
+from typing import Iterable, Sequence
 
+import numpy as np
 import pandas as pd
 
 from walkscope.config import INDICATORS, Persona
-from walkscope.tags import as_list, road_classes
+from walkscope.tags import as_list, is_pedestrian_only, road_classes
 
 
 def score_segments(segments: pd.DataFrame, persona: Persona) -> pd.Series:
@@ -54,3 +56,49 @@ def weakest(segments: pd.DataFrame, column: str, n: int = 10,
     seg["segment_id"] = seg.index
     worst = seg.sort_values(column, kind="stable").drop_duplicates("street")
     return worst.head(n)[["street", "type", column, *extra, "segment_id"]].reset_index(drop=True)
+
+
+# --- Area summaries -------------------------------------------------------------
+
+def length_weighted_mean(values: pd.Series, lengths: pd.Series) -> float:
+    """Mean of values weighted by segment length; NaN if there is no length."""
+    total = float(lengths.sum())
+    return float(np.dot(values.to_numpy(dtype=float), lengths.to_numpy(dtype=float)) / total) if total > 0         else float("nan")
+
+
+@dataclass(frozen=True)
+class AreaSummary:
+    """Area figures for one score column, over the scored segments (docs/method.md, "Area summaries").
+
+    Footways, paths and other pedestrian-only segments score 100 on traffic
+    stress and infrastructure by definition and make up about half of all
+    segments, so they are kept out of the headline and reported separately.
+    """
+    road_mean: float            # headline: length-weighted mean over roads
+    road_km: float
+    pedestrian_mean: float      # length-weighted mean over pedestrian-only segments
+    pedestrian_km: float
+
+    @property
+    def pedestrian_share(self) -> float:
+        """Pedestrian-only share of the scored network length (0-1)."""
+        total = self.road_km + self.pedestrian_km
+        return self.pedestrian_km / total if total > 0 else float("nan")
+
+
+def pedestrian_mask(segments: pd.DataFrame, pedestrian_only: Iterable[str]) -> pd.Series:
+    allowed = list(pedestrian_only)
+    return segments["highway"].map(lambda h: is_pedestrian_only(h, allowed)).astype(bool)
+
+
+def area_summary(segments: pd.DataFrame, column: str, pedestrian_only: Iterable[str]) -> AreaSummary:
+    """Length-weighted summary of `column` over scored segments, roads and pedestrian-only apart."""
+    seg = segments[segments["scored"]]
+    ped = pedestrian_mask(seg, pedestrian_only)
+    roads, paths = seg[~ped], seg[ped]
+    return AreaSummary(
+        road_mean=length_weighted_mean(roads[column], roads["length"]),
+        road_km=float(roads["length"].sum()) / 1000,
+        pedestrian_mean=length_weighted_mean(paths[column], paths["length"]),
+        pedestrian_km=float(paths["length"].sum()) / 1000,
+    )

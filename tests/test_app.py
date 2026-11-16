@@ -178,8 +178,12 @@ def test_app_scores_a_place(offline):
     assert not at.exception
     assert not at.error
     assert at.subheader[0].value == "Grid"
-    assert at.metric[1].value == "7"                          # streets scored
-    assert at.metric[2].value == "89"                         # mean: 4 footways 100, 3 residential 75
+    # 7 scored segments of 100 m: 3 residential roads (traffic stress 75) and 4 footways.
+    assert at.metric[1].value == "0.7 km"
+    assert at.metric[2].label == "Traffic stress, roads"
+    assert at.metric[2].value == "75"                         # roads only, footways left out
+    assert at.metric[3].value == "57%"                        # footways: 4 of 7 segments by length
+    assert at.metric[4].value == "0%"                         # no maxspeed tags in the fixture
     table = at.dataframe[0].value
     assert list(table.columns) == ["Street", "Road type", "Traffic stress", "Speed used", "Source"]
     assert table["Street"].tolist() == ["Row 0 Street", "Row 1 Street", "Row 2 Street"]
@@ -205,7 +209,7 @@ def test_app_second_visit_uses_memory(offline, monkeypatch):
     at = _run_app("Grid")
     monkeypatch.setattr(pipeline, "fetch_area", lambda area, params: pytest.fail("downloaded again"))
     at.run()
-    assert not at.exception and at.metric[1].value == "7"
+    assert not at.exception and at.metric[1].value == "0.7 km"
 
 
 def test_app_shows_busy_message(monkeypatch):
@@ -261,5 +265,5 @@ def test_app_map_selector_shows_every_indicator(offline):
             assert table[extra[0]].tolist() == first_values
         if scores is not None:
             assert table[label].tolist() == scores
-        assert at.metric[2].label == f"Mean {label.lower()}"
+        assert at.metric[2].label == f"{label}, roads"
     assert table["Furthest category"].iloc[0] == "none within 800 m: school, café, doctor"

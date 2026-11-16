@@ -105,7 +105,7 @@ def test_missing_file_rejected(tmp_path):
 
 def test_shipped_indicator_params_match_method():
     params = load_indicator_params()
-    assert params["area"]["buffer_m"] == 800
+    assert params["area"]["buffer_m"] == 1000
     assert (params["amenity"]["full_score_m"], params["amenity"]["zero_score_m"]) == (200, 800)
     assert params["connectivity"]["radius_m"] == 400
     assert (params["connectivity"]["density_zero"], params["connectivity"]["density_full"]) == (30, 150)

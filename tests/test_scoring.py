@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -67,3 +68,37 @@ def test_weakest_returns_segment_id_and_extra_columns(segs):
     assert list(table.columns) == ["street", "type", "traffic_stress", "speed_kmh", "segment_id"]
     assert table["segment_id"].tolist() == [1, 4, 3]
     assert table["speed_kmh"].tolist()[0] == 30
+
+
+# --- area summaries ---------------------------------------------------------------
+
+from walkscope.scoring import area_summary, length_weighted_mean  # noqa: E402
+
+PEDESTRIAN = ["footway", "pedestrian", "path", "steps"]
+
+
+def test_length_weighted_mean():
+    assert length_weighted_mean(pd.Series([100, 0]), pd.Series([30.0, 10.0])) == 75
+    assert np.isnan(length_weighted_mean(pd.Series([], dtype=float), pd.Series([], dtype=float)))
+
+
+def test_area_summary_separates_roads_and_paths_and_weights_by_length():
+    seg = pd.DataFrame({
+        "highway": ["residential", "primary", "footway", "path", "residential"],
+        "length": [300.0, 100.0, 50.0, 150.0, 999.0],
+        "scored": [True, True, True, True, False],          # last one is outside the area
+        "traffic_stress": [80.0, 20.0, 100.0, 100.0, 0.0],
+    })
+    summary = area_summary(seg, "traffic_stress", PEDESTRIAN)
+    assert summary.road_mean == pytest.approx((80 * 300 + 20 * 100) / 400)   # 65, not the segment mean 75
+    assert summary.road_km == pytest.approx(0.4)
+    assert summary.pedestrian_mean == 100
+    assert summary.pedestrian_km == pytest.approx(0.2)
+    assert summary.pedestrian_share == pytest.approx(1 / 3)
+
+
+def test_area_summary_without_roads():
+    seg = pd.DataFrame({"highway": ["footway"], "length": [10.0], "scored": [True], "amenity": [40.0]})
+    summary = area_summary(seg, "amenity", PEDESTRIAN)
+    assert np.isnan(summary.road_mean)
+    assert summary.pedestrian_share == 1

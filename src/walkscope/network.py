@@ -80,7 +80,9 @@ def graph_to_segments(
 ) -> gpd.GeoDataFrame:
     """Build the segments table from a projected walking graph.
 
-    Columns: u, v, key, length, geometry, the TAG_COLUMNS, and
+    Columns: u, v, key, length, geometry, the TAG_COLUMNS, `way_parts`
+    ((highway, maxspeed, length) per merged OSM way piece, or None; see
+    fetch.simplify_with_way_parts), and
     - `measure_node`: graph node nearest the segment midpoint;
     - `in_area`: midpoint inside the study area;
     - `routing_only`: kept for walking distances only (a road's sidewalk or
@@ -95,7 +97,7 @@ def graph_to_segments(
     undirected = ox.convert.to_undirected(graph)
     edges = ox.graph_to_gdfs(undirected, nodes=False, fill_edge_geometry=True).reset_index()
 
-    for col in TAG_COLUMNS:
+    for col in (*TAG_COLUMNS, "way_parts"):
         if col not in edges.columns:
             edges[col] = None
 
@@ -111,7 +113,7 @@ def graph_to_segments(
     ]
     edges["scored"] = edges["in_area"] & ~edges["routing_only"]
 
-    cols = ["u", "v", "key", "length", *TAG_COLUMNS,
+    cols = ["u", "v", "key", "length", *TAG_COLUMNS, "way_parts",
             "measure_node", "in_area", "routing_only", "scored", "geometry"]
     segments = gpd.GeoDataFrame(edges[cols], geometry="geometry", crs=edges.crs)
     segments.index.name = "segment_id"

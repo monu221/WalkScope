@@ -25,7 +25,7 @@ from walkscope.config import load_indicator_params
 from walkscope.fetch import AreaError, ServerBusyError
 from walkscope.mapview import legend_html, make_map
 from walkscope.network import Network
-from walkscope.scoring import display_name, weakest
+from walkscope.scoring import area_summary, display_name, length_weighted_mean, weakest
 from walkscope.tags import is_pedestrian_only
 
 log = logging.getLogger(__name__)
@@ -53,14 +53,25 @@ def _params() -> dict:
 # the weakest-streets table.
 
 def _speed_kmh(seg: pd.DataFrame) -> pd.Series:
-    return seg["speed_kmh"].round().astype(int).astype(str) + " km/h"
+    """'30 km/h', or '30–50 km/h' for a segment merged from ways with different limits."""
+    lo = seg["speed_min_kmh"].round().astype(int).astype(str)
+    hi = seg["speed_max_kmh"].round().astype(int).astype(str)
+    return (lo + "–" + hi).where(lo != hi, lo) + " km/h"
+
+
+def _source(seg: pd.DataFrame) -> pd.Series:
+    share = seg["speed_tagged_share"]
+    return pd.Series("partly tagged", index=seg.index).mask(share >= 0.999, "tagged").mask(share <= 0.001, "assumed")
 
 
 def speed_popup(seg: pd.DataFrame) -> pd.Series:
     """Speed limit used for traffic stress, and whether it was tagged or assumed."""
-    text = _speed_kmh(seg) + seg["speed_tagged"].map(
-        {True: ", tagged in OSM", False: ", assumed (no speed limit tagged; default for the road type)"})
-    return text.where(~pedestrian_only(seg), "none (no motor traffic)")
+    note = _source(seg).map({
+        "tagged": "tagged in OSM",
+        "assumed": "assumed (no speed limit tagged; default for the road type)",
+        "partly tagged": "partly tagged in OSM, rest assumed",
+    })
+    return (_speed_kmh(seg) + ", " + note).where(~pedestrian_only(seg), "none (no motor traffic)")
 
 
 def speed_used(seg: pd.DataFrame) -> pd.Series:
@@ -68,8 +79,7 @@ def speed_used(seg: pd.DataFrame) -> pd.Series:
 
 
 def speed_source(seg: pd.DataFrame) -> pd.Series:
-    source = seg["speed_tagged"].map({True: "tagged", False: "assumed"})
-    return source.where(~pedestrian_only(seg), "–")
+    return _source(seg).where(~pedestrian_only(seg), "–")
 
 
 def _for_roads(seg: pd.DataFrame, text: pd.Series) -> pd.Series:
@@ -238,16 +248,31 @@ def render_sidebar() -> View:
     return view
 
 
+def _fmt(value: float, fmt: str) -> str:
+    return "–" if pd.isna(value) else format(value, fmt)
+
+
 def render_summary(net: Network, view: View) -> None:
-    s = net.segments[net.segments["scored"]]
-    roads = s[~pedestrian_only(s)]
-    c1, c2, c3, c4 = st.columns(4)
+    """Area figures, by the rule in docs/method.md ("Area summaries"): length-weighted,
+    headline over roads, footways and paths reported separately."""
+    seg = net.segments
+    summary = area_summary(seg, view.column, _params()["pedestrian_only_highways"])
+    roads = seg[seg["scored"] & ~pedestrian_only(seg)]
+    tagged = length_weighted_mean(roads["speed_tagged_share"], roads["length"])
+
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Area", f"{net.area.area / 1e6:.1f} km²")           # net.area is in metres (UTM)
-    c2.metric("Streets scored", f"{len(s):,}")
-    c3.metric(f"Mean {view.label.lower()}", f"{s[view.column].mean():.0f}",
-              help="0 = worst, 100 = best, averaged over all scored segments.")
-    c4.metric("Speed limit tagged", f"{roads['speed_tagged'].mean():.0%}" if len(roads) else "–",
-              help="Share of roads with a speed limit in OpenStreetMap; the rest use German default speeds.")
+    c2.metric("Street network", f"{summary.road_km + summary.pedestrian_km:.1f} km",
+              help="Length of all scored streets, footways and paths.")
+    c3.metric(f"{view.label}, roads", _fmt(summary.road_mean, ".0f"),
+              help="Average over roads, weighted by length (0 = worst, 100 = best). "
+                   "Footways and paths are left out; see the next figure.")
+    c4.metric("Footways and paths", _fmt(summary.pedestrian_share, ".0%"),
+              help=f"Share of the scored network length. Their average {view.label.lower()} is "
+                   f"{_fmt(summary.pedestrian_mean, '.0f')}; on traffic stress and infrastructure "
+                   "they score 100 by definition.")
+    c5.metric("Speed limit tagged", _fmt(tagged, ".0%"),
+              help="Share of road length with a speed limit in OpenStreetMap; the rest use default speeds.")
     # Data-completeness panel goes here (build step 6).
 
 

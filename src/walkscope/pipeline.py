@@ -47,7 +47,7 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None,
     """Download, build and score one study area (EPSG:4326 polygon).
 
     Adds indicator columns to `network.segments`. So far: `traffic_stress`,
-    `speed_kmh`, `speed_tagged`; `infrastructure` (general-adult mix) and its
+    `speed_kmh`, `speed_min_kmh`, `speed_max_kmh`, `speed_tagged`, `speed_tagged_share`; `infrastructure` (general-adult mix) and its
     sub-scores `infra_sidewalk`, `infra_crossing`, `infra_kerb`,
     `infra_surface`, `infra_lit`, `infra_base`; `connectivity` and
     `intersection_density` (per km²); `transit`, `transit_distance_m` (any
@@ -75,7 +75,8 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None,
             "No streets to score inside this area; it may be a single square or building.",
             hint="Try the surrounding neighbourhood or district.",
         )
-    seg[["speed_kmh", "speed_tagged"]] = effective_speed(seg, params)
+    speed = effective_speed(seg, params)
+    seg[speed.columns.drop("speed_score")] = speed.drop(columns="speed_score")
     seg["traffic_stress"] = traffic_score(seg, params)
 
     crossings, kerbs = split_street_points(net.street_points, params)

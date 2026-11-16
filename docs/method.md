@@ -14,7 +14,7 @@ Each street segment gets five indicator scores from 0 to 100, combined as a weig
 
 ## Study area and measuring point
 
-- The OSM data is downloaded for the study area plus an **800 m buffer**, so that streets near the edge can reach amenities and stops outside it. Only segments inside the study area are scored and shown.
+- The OSM data is downloaded for the study area plus a **1,000 m buffer**, so that streets near the edge can reach amenities, stops and rail stations outside it (the furthest reach used is 1,000 m to a rail station). Only segments inside the study area are scored and shown.
 - Distances for a segment are measured from the **network node nearest to the segment midpoint**.
 - Footways, pedestrian streets, paths and steps are scored as segments like any other street. Together they form the *pedestrian-only* class used below.
 
@@ -110,9 +110,10 @@ The infrastructure score depends on the persona, but its sub-scores do not; they
 ### Traffic stress
 
 - Pedestrian-only segments score **100**.
-- Speed comes from `maxspeed`. If it is missing, the **default speed for the road class** (in the config) is used: the German urban default (50 km/h) for most classes, but **30 km/h for residential streets** (see below). Zone values such as `DE:zone30` and `DE:urban` are translated using the config. If a segment has several values, the highest one is used.
+- Speed comes from `maxspeed`. If it is missing, the **default speed for the road class** (in the config) is used: the German urban default (50 km/h) for most classes, but **30 km/h for residential streets** (see below). Zone values such as `DE:zone30` and `DE:urban` are translated using the config. If one tag holds several values (`30;50`), the highest one is used.
+- **Merged segments.** OSMnx merges the OSM ways between two junctions into one segment and keeps only the distinct tag values, so a segment can carry `maxspeed` 30 and 50 without saying which part is which. WalkScope keeps each way piece's road class, speed limit and length (`way_parts`, see `fetch.simplify_with_way_parts`). Each piece gets its own speed (its tag, or the default for its own class) and speed score; the segment's speed score is the **length-weighted average** of the pieces. A pedestrian-only piece merged into a road (e.g. a short footway link) counts as 100. Before, the highest speed was used for the whole segment, so a 41 m segment of Lerchenstraße that is mostly 30 km/h scored as 50 km/h.
 - Speed score, linear between these points: 10 km/h → 100, 30 km/h → 75, 50 km/h → 30, 70 km/h → 0.
-- **Road-class factor:** the speed score is multiplied by a factor for the road class: trunk 0.5, primary 0.6, secondary 0.7, tertiary 0.85; residential, living street and every other class 1.0. `_link` roads use their parent class's factor; a merged segment uses the lowest factor among its classes.
+- **Road-class factor:** the speed score is multiplied by a factor for the road class: trunk 0.5, primary 0.6, secondary 0.7, tertiary 0.85, unclassified 0.9; residential, living street, pedestrian-only and every other class 1.0. `_link` roads use their parent class's factor; a merged segment uses the lowest factor among its classes.
 - Lanes: −10 points for each lane above 2 (from `lanes`). If `lanes` is missing, there is no penalty.
 - Clipped to 0–100.
 
@@ -129,7 +130,7 @@ So score = speed score × class factor − lane penalty, clipped to 0–100. At 
 | Sternschanze, Hamburg | 91 | 88 (97 %) | 95 % | 3 |
 | Aachen city centre | 222 | 222 (100 %) | 100 % | 21 |
 
-Scored segments only; the 800 m download buffers give the same picture (89–97 %). Nearly all the rest are tagged 50. So an untagged residential street is assumed to be 30 km/h. This is an assumption: streets that are left untagged may differ from tagged ones, and the default for every other road class stays at 50 km/h.
+Scored segments only; the download buffers around them give the same picture (89–97 %). Nearly all the rest are tagged 50. So an untagged residential street is assumed to be 30 km/h. This is an assumption: streets that are left untagged may differ from tagged ones, and the default for every other road class stays at 50 km/h.
 
 ### Transit access
 
@@ -139,7 +140,7 @@ Scored segments only; the 800 m download buffers give the same picture (89–97 
 
 Why: with one scale of 300 m → 800 m, nearly every inner-city segment scored 100 (96 % in Sternschanze, 78 % in St. Pauli), because bus stops are everywhere. The tighter stop scale and the separate station scale give 71–100 in Sternschanze (median 100, 67 % at 100), 24–100 in St. Pauli (median 99) and 15–100 in Iserbrook (median 88). Sternschanze still scores high almost everywhere: it has eight U-Bahn and S-Bahn stations within reach.
 
-**Limitation:** the download buffer is 800 m, so a rail station 800–1,000 m beyond the edge of the study area is not seen. Only segments near the edge are affected, and they lose at most 29 points of the station score (the value at 800 m).
+The 1,000 m download buffer covers the rail-station reach, so a station just beyond the edge of the study area still counts.
 
 ### Walking distances
 
@@ -166,6 +167,16 @@ In v1 the child persona uses this weight row only. Schools get no extra weight.
 For each segment: score = sum of (indicator score × persona weight) / 100.
 
 **Impassable segments:** for the wheelchair persona, `highway=steps` segments get a combined score of **0**, whatever their indicator scores. This list is set per persona in `config/personas.yaml` (`impassable_highways`).
+
+## Area summaries
+
+Every figure for a whole area (the summary row in the app, and later the report) follows one rule:
+
+- **Weighted by segment length.** A 300 m street counts three times as much as a 100 m one. OSMnx splits streets at every junction, so an unweighted mean over-counts short pieces.
+- **Headline over roads only.** Footways, paths, pedestrian streets and steps (the pedestrian-only class) are left out of the headline average and reported separately as their **share of the scored network length**, with their own average. They are 43–63 % of segments in the Hamburg test areas and score 100 on traffic stress and on the base infrastructure score by definition, so including them pushed area means up regardless of how the roads are.
+- Over **scored segments** only (inside the study area, not routing-only).
+
+The function is `scoring.area_summary`.
 
 ## Weakest streets
 

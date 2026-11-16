@@ -234,3 +234,33 @@ def test_fetch_area_downloads_once_then_uses_cache(monkeypatch, tmp_path, grid_g
     params["area"]["buffer_m"] = 400               # different settings -> new download
     fetch.fetch_area(grid_area, params, cache_dir=tmp_path)
     assert len(calls) == 2
+
+
+def test_simplify_with_way_parts_keeps_each_ways_speed_and_length():
+    import networkx as nx
+    # e - a - b - c - d - f: one street between two dead ends, made of OSM
+    # ways tagged 30 and 50. All inner nodes are interstitial, so it becomes one edge.
+    g = nx.MultiDiGraph(crs="EPSG:4326")
+    for n, x in zip("abcd", range(4)):
+        g.add_node(n, x=13.4 + x * 0.001, y=52.5, street_count=2)
+    g.add_node("e", x=13.4, y=52.501, street_count=1)
+    g.add_node("f", x=13.403, y=52.501, street_count=1)
+
+    def way(u, v, osmid, maxspeed, length):
+        for a, b in ((u, v), (v, u)):
+            g.add_edge(a, b, osmid=osmid, highway="residential", maxspeed=maxspeed, length=length,
+                       oneway=False, reversed=a != u)
+
+    way("a", "b", 1, "30", 60.0)
+    way("b", "c", 1, "30", 40.0)
+    way("c", "d", 2, "50", 25.0)
+    way("a", "e", 3, "30", 50.0)
+    way("d", "f", 4, "30", 50.0)
+    simple = fetch.simplify_with_way_parts(g)
+    assert simple.number_of_edges() == 2                            # e-f, both directions
+    data = next(iter(simple.get_edge_data("e", "f").values()))
+    assert data["length"] == 225.0
+    assert sorted(data["maxspeed"]) == ["30", "50"]                 # OSMnx keeps only distinct values
+    assert sorted(data["way_parts"]) == [("residential", "30", 40.0), ("residential", "30", 50.0),
+                                         ("residential", "30", 50.0), ("residential", "30", 60.0),
+                                         ("residential", "50", 25.0)]

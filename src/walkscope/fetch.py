@@ -37,7 +37,7 @@ truststore.inject_into_ssl()
 CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
 # Bump when the cached content or its shape changes, so old cache files are ignored.
 # (Re-classifying needs no new download: OSMnx's HTTP cache still has the responses.)
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 # All OSMnx HTTP responses (Nominatim and Overpass) are cached here.
 ox.settings.use_cache = True
@@ -72,6 +72,24 @@ def walk_filter() -> str:
         f'platform|proposed|raceway|razed|rest_area|services"]'
         f'["foot"!~"no"]["service"!~"private"]'
     )
+
+
+def _join_parts(values: list[tuple]) -> tuple:
+    return tuple(part for parts in values for part in parts)
+
+
+def simplify_with_way_parts(raw: nx.MultiDiGraph) -> nx.MultiDiGraph:
+    """Simplify an unsimplified OSMnx graph, keeping what each merged way contributed.
+
+    OSMnx simplification merges the OSM ways between two intersections into
+    one edge and keeps only the distinct tag values (e.g. maxspeed [30, 50]),
+    losing which part had which value. Each simplified edge here also gets
+    `way_parts`: a tuple of (highway, maxspeed, length in metres), one per
+    original edge piece, so traffic stress can weight mixed segments by length.
+    """
+    for _, _, data in raw.edges(data=True):
+        data["way_parts"] = ((data.get("highway"), data.get("maxspeed"), float(data["length"])),)
+    return ox.simplify_graph(raw, edge_attr_aggs={"length": sum, "way_parts": _join_parts})
 
 
 # Point features on the street itself, used by the infrastructure indicator.
@@ -251,11 +269,12 @@ def _download(buffered: BaseGeometry, tags: dict[str, Any]) -> tuple[nx.MultiDiG
         defaults = list(ox.settings.useful_tags_way)
         ox.settings.useful_tags_way = defaults + [t for t in EXTRA_WAY_TAGS if t not in defaults]
         try:
-            return ox.graph_from_polygon(
-                buffered, custom_filter=walk_filter(), simplify=True, retain_all=False
+            raw = ox.graph_from_polygon(
+                buffered, custom_filter=walk_filter(), simplify=False, retain_all=False
             )
         finally:
             ox.settings.useful_tags_way = defaults
+        return simplify_with_way_parts(raw)
 
     def get_features() -> gpd.GeoDataFrame:
         try:

@@ -78,7 +78,8 @@ CASES = [
     ("zone 30", "residential", "DE:zone30", None, 75),
     ("40 between", "secondary", "40", None, 52.5 * 0.7),
     ("tertiary 50", "tertiary", "50", None, 30 * 0.85),
-    ("unclassified 30", "unclassified", "30", None, 75),          # unlisted class: factor 1
+    ("unclassified 30", "unclassified", "30", None, 75 * 0.9),
+    ("service 30", "service", "30", None, 75),                    # unlisted class: factor 1
     ("merged", ["residential", "primary"], "30", None, 75 * 0.6), # lowest factor
     ("living street", "living_street", None, None, 100),
     ("trunk default", "trunk", None, None, 0),
@@ -119,7 +120,7 @@ def test_primary_scores_below_residential_at_same_speed(cases):
 
 @pytest.mark.parametrize("highway, expected", [
     ("primary", 0.6), ("primary_link", 0.6), ("trunk_link", 0.5), ("secondary", 0.7),
-    ("tertiary", 0.85), ("residential", 1.0), ("living_street", 1.0), ("footway", 1.0),
+    ("tertiary", 0.85), ("unclassified", 0.9), ("residential", 1.0), ("living_street", 1.0), ("footway", 1.0),
     (["tertiary", "secondary"], 0.7), (None, 1.0),
 ])
 def test_class_factor(highway, expected):
@@ -144,3 +145,46 @@ def test_traffic_score_on_network_segments(area_data):
     scores = traffic_score(segments, PARAMS)
     assert (scores[segments["highway"] == "footway"] == 100).all()
     assert (scores[segments["highway"] == "residential"] == 75).all()   # no maxspeed -> 30 km/h
+
+
+# --- merged segments: length-weighted speed scores ------------------------------
+
+def merged(parts, highway="residential", maxspeed=None, lanes=None):
+    """One segment built from (highway, maxspeed, length) pieces, as fetch.simplify_with_way_parts makes."""
+    return pd.DataFrame([{"highway": highway, "maxspeed": maxspeed, "lanes": lanes,
+                          "length": sum(p[2] for p in parts), "way_parts": tuple(parts)}])
+
+
+def test_merged_segment_uses_length_weighted_speed_score():
+    # 30 m tagged 30 (score 75) + 10 m tagged 50 (score 30): (75*30 + 30*10) / 40
+    seg = merged([("residential", "30", 30.0), ("residential", "50", 10.0)], maxspeed=["30", "50"])
+    assert traffic_score(seg, PARAMS).iloc[0] == pytest.approx((75 * 30 + 30 * 10) / 40)
+    speed = effective_speed(seg, PARAMS).iloc[0]
+    assert speed["speed_kmh"] == pytest.approx(35)
+    assert (speed["speed_min_kmh"], speed["speed_max_kmh"]) == (30, 50)
+    assert speed["speed_tagged"] and speed["speed_tagged_share"] == 1
+
+
+def test_without_way_parts_several_values_still_use_the_highest():
+    seg = merged([("residential", "30", 30.0)], maxspeed=["30", "50"]).assign(way_parts=None)
+    assert traffic_score(seg, PARAMS).iloc[0] == 30
+
+
+def test_untagged_piece_uses_its_own_class_default():
+    # 20 m untagged residential (default 30 -> 75) + 20 m tagged 50 (30); half tagged.
+    seg = merged([("residential", None, 20.0), ("residential", "50", 20.0)], maxspeed="50")
+    assert traffic_score(seg, PARAMS).iloc[0] == pytest.approx(52.5)
+    speed = effective_speed(seg, PARAMS).iloc[0]
+    assert speed["speed_tagged_share"] == pytest.approx(0.5) and not speed["speed_tagged"]
+
+
+def test_pedestrian_piece_of_a_road_counts_as_calm():
+    # 30 m residential tagged 50 (30) + 10 m footway (100), class factor 1.
+    seg = merged([("residential", "50", 30.0), ("footway", None, 10.0)], highway=["residential", "footway"])
+    assert traffic_score(seg, PARAMS).iloc[0] == pytest.approx((30 * 30 + 100 * 10) / 40)
+    assert effective_speed(seg, PARAMS).iloc[0]["speed_kmh"] == 50     # speed of the road pieces only
+
+
+def test_class_factor_and_lanes_apply_after_weighting():
+    seg = merged([("primary", "30", 50.0), ("primary", "50", 50.0)], highway="primary", lanes="4")
+    assert traffic_score(seg, PARAMS).iloc[0] == pytest.approx((75 + 30) / 2 * 0.6 - 20)
