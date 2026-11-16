@@ -1,0 +1,52 @@
+# Persona weights for the combined score (see docs/method.md).
+# weights: share of each indicator in the combined score, must sum to 100.
+# infrastructure_mix: how the infrastructure indicator is built for this
+#   persona from the base score and the extra sub-scores, must sum to 100.
+
+personas:
+  general_adult:
+    label: General adult
+    weights:
+      amenity: 30
+      connectivity: 20
+      infrastructure: 20
+      traffic_stress: 15
+      transit: 15
+    infrastructure_mix:
+      base: 100
+
+  wheelchair:
+    label: Wheelchair user
+    weights:
+      amenity: 20
+      connectivity: 10
+      infrastructure: 40
+      traffic_stress: 15
+      transit: 15
+    infrastructure_mix:
+      base: 50
+      kerb: 25
+      surface: 25
+
+  child:
+    label: Child walking to school
+    weights:
+      amenity: 20
+      connectivity: 10
+      infrastructure: 25
+      traffic_stress: 35
+      transit: 10
+    infrastructure_mix:
+      base: 100
+
+  night:
+    label: Night-time
+    weights:
+      amenity: 20
+      connectivity: 15
+      infrastructure: 35
+      traffic_stress: 15
+      transit: 15
+    infrastructure_mix:
+      base: 60
+      lit: 40

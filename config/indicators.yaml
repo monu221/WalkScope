@@ -1,0 +1,129 @@
+# Thresholds, defaults and tag mappings for the five indicators.
+# Every rule here is described in docs/method.md. Change numbers here, not in code.
+
+area:
+  buffer_m: 800              # download this much around the study area; score only inside it
+
+walking:
+  max_distance_m: 800        # 10-minute walk, used for every persona in v1
+  speed_kmh: 4.8             # kept for later versions; not used in v1
+
+pedestrian_only_highways: [footway, pedestrian]
+
+amenity:
+  # A category is reached if any matching feature is within walking.max_distance_m.
+  # Score = categories reached / number of categories * 100.
+  categories:
+    groceries:
+      shop: [supermarket, convenience, greengrocer, bakery, butcher]
+    school:
+      amenity: [school]
+    pharmacy:
+      amenity: [pharmacy]
+    park:
+      leisure: [park, playground]
+    cafe:
+      amenity: [cafe]
+    doctor:
+      amenity: [doctors, clinic]
+
+connectivity:
+  radius_m: 400              # straight-line radius around the measuring node
+  min_street_count: 3        # a node is an intersection if this many streets meet
+  density_zero: 30           # intersections per km² that score 0
+  density_full: 150          # intersections per km² that score 100
+
+infrastructure:
+  base_mix:                  # for segments that are not pedestrian-only
+    sidewalk: 60
+    crossing: 40
+  pedestrian_only_base: 100
+  missing_score: 50          # used for any missing sidewalk / kerb / surface / lit tag
+  sidewalk:
+    both: 100
+    separate: 100
+    left: 60
+    right: 60
+    "no": 0
+    none: 0
+  crossing:
+    search_radius_m: 50
+    marked_values: [marked, zebra, traffic_signals, uncontrolled]
+    marked_score: 100
+    unmarked_score: 50
+    none_score: 0
+  kerb:
+    search_radius_m: 50      # worst kerb within this distance of the segment
+    values:
+      flush: 100
+      lowered: 100
+      "no": 100
+      rolled: 50
+      raised: 0
+  surface:
+    tags: ["sidewalk:surface", surface]   # first one present is used
+    values:
+      paved: 100
+      asphalt: 100
+      concrete: 100
+      "concrete:plates": 100
+      paving_stones: 100
+      compacted: 60
+      fine_gravel: 60
+      sett: 30
+      cobblestone: 30
+      unhewn_cobblestone: 30
+      unpaved: 0
+      gravel: 0
+      dirt: 0
+      ground: 0
+      grass: 0
+      sand: 0
+      mud: 0
+  lit:
+    values:
+      "yes": 100
+      "24/7": 100
+      automatic: 100
+      "no": 0
+
+traffic_stress:
+  pedestrian_only_score: 100
+  # Speed score is linear between these [km/h, score] points, clipped outside.
+  speed_curve:
+    - [10, 100]
+    - [30, 75]
+    - [50, 30]
+    - [70, 0]
+  lanes_free: 2              # no penalty up to this many lanes
+  lane_penalty: 10           # points off for each lane above lanes_free
+  # Used when maxspeed is missing. German urban defaults by road class.
+  default_speed_kmh:
+    trunk: 70
+    primary: 50
+    secondary: 50
+    tertiary: 50
+    unclassified: 50
+    residential: 50
+    service: 30
+    living_street: 7
+    track: 30
+    other: 50
+  # Non-numeric maxspeed values.
+  maxspeed_aliases:
+    "DE:urban": 50
+    "DE:zone30": 30
+    "DE:zone:30": 30
+    "DE:zone20": 20
+    "DE:zone:20": 20
+    "DE:living_street": 7
+    "DE:rural": 100
+    walk: 7
+
+transit:
+  full_score_m: 300          # 100 points within this walking distance
+  zero_score_m: 800          # 0 points at and beyond this distance
+  stop_tags:
+    highway: [bus_stop]
+    public_transport: [platform, stop_position, station]
+    railway: [station, halt, tram_stop]

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "walkscope"
+version = "0.1.0"
+description = "Street-by-street walkability scores from OpenStreetMap, per persona."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+dependencies = [
+    "osmnx>=2.0",
+    "networkx>=3.2",
+    "geopandas>=1.0",
+    "shapely>=2.0",
+    "streamlit>=1.30",
+    "folium>=0.15",
+    "streamlit-folium>=0.20",
+    "fpdf2>=2.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

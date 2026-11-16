@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+build/
+dist/
+
+# Downloaded OSM data
+data/cache/
+
+# Streamlit local secrets
+.streamlit/secrets.toml
