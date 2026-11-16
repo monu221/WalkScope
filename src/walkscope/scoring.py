@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Sequence
+
 import pandas as pd
 
 from walkscope.config import INDICATORS, Persona
@@ -31,15 +33,24 @@ def display_name(name: object) -> str | None:
     return " / ".join(names) if names else None
 
 
-def weakest(segments: pd.DataFrame, column: str, n: int = 10) -> pd.DataFrame:
+def road_type(highway: object) -> str:
+    """Highway value(s) for display, e.g. "footway / steps"."""
+    return " / ".join(as_list(highway))
+
+
+def weakest(segments: pd.DataFrame, column: str, n: int = 10,
+            extra: Sequence[str] = ()) -> pd.DataFrame:
     """The n lowest-scoring named streets among scored segments.
 
     One row per street name (its lowest-scoring segment), so a long street
     doesn't fill the table. Unnamed segments are left out (docs/method.md).
+    Columns: street, type, `column`, the `extra` columns of that segment, and
+    `segment_id`.
     """
     seg = segments[segments["scored"]].copy()
     seg["street"] = seg["name"].map(display_name)
     seg = seg[seg["street"].notna()]
-    seg["type"] = seg["highway"].map(lambda h: " / ".join(as_list(h)))
-    worst = seg.sort_values(column).drop_duplicates("street")
-    return worst.head(n)[["street", "type", column]].reset_index(drop=True)
+    seg["type"] = seg["highway"].map(road_type)
+    seg["segment_id"] = seg.index
+    worst = seg.sort_values(column, kind="stable").drop_duplicates("street")
+    return worst.head(n)[["street", "type", column, *extra, "segment_id"]].reset_index(drop=True)

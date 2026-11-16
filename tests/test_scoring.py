@@ -59,3 +59,11 @@ def test_weakest_named_only_one_row_per_street(segs):
 def test_weakest_ignores_unscored(segs):
     segs.loc[1, "scored"] = False
     assert weakest(segs, "traffic_stress").loc[0, "traffic_stress"] == 60
+
+
+def test_weakest_returns_segment_id_and_extra_columns(segs):
+    segs["speed_kmh"] = [50, 30, None, 50, None]
+    table = weakest(segs, "traffic_stress", extra=["speed_kmh"])
+    assert list(table.columns) == ["street", "type", "traffic_stress", "speed_kmh", "segment_id"]
+    assert table["segment_id"].tolist() == [1, 4, 3]
+    assert table["speed_kmh"].tolist()[0] == 30

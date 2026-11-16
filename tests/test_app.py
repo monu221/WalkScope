@@ -113,28 +113,85 @@ def test_make_map_draws_only_scored_segments(offline):
     assert "Traffic stress" in html
 
 
+def test_score_place_reports_progress_steps(offline):
+    steps = []
+    pipeline.score_place("Grid", progress=steps.append)
+    assert steps == [pipeline.STEP_FIND, pipeline.STEP_DOWNLOAD, pipeline.STEP_SCORE]
+
+
+def test_area_errors_carry_a_hint(monkeypatch):
+    monkeypatch.setattr(pipeline, "area_from_place", lambda name: box(13.0, 52.3, 13.8, 52.7))
+    with pytest.raises(AreaError) as err:
+        pipeline.score_place("Berlin")
+    assert "neighbourhood or district" in err.value.hint
+    assert AreaError("x").hint == fetch.DEFAULT_AREA_HINT
+
+
+# --- Streamlit page -------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def fresh_app_cache():
+    """The app keeps scored places in st.cache_resource; don't leak them between tests."""
+    import streamlit as st
+    st.cache_resource.clear()
+    yield
+    st.cache_resource.clear()
+
+
+def _app():
+    return AppTest.from_file(APP, default_timeout=60).run()
+
+
 def _run_app(place):
-    at = AppTest.from_file(APP, default_timeout=60).run()
-    at.text_input[0].input(place)
-    at.button[0].click()
+    at = _app()
+    at.sidebar.text_input(key="place_input").input(place)
+    at.sidebar.button[0].click()                              # the form's Score area button
     return at.run()
 
 
 def test_app_start_page():
-    at = AppTest.from_file(APP, default_timeout=60).run()
+    at = _app()
     assert not at.exception
     assert at.title[0].value == "WalkScope"
     assert "Score area" in at.info[0].value
+    assert at.sidebar.button[0].label == "Score area"
+    assert [b.label for b in at.sidebar.button[1:]] == ["St. Pauli", "Sternschanze", "Burtscheid (Aachen)"]
+    assert at.expander[0].label == "How is this scored?"
+    assert any("OpenStreetMap" in c.value for c in at.caption)
 
 
 def test_app_scores_a_place(offline):
     at = _run_app("Grid")
     assert not at.exception
     assert not at.error
+    assert at.subheader[0].value == "Grid"
     assert at.metric[1].value == "7"                          # streets scored
     assert at.metric[2].value == "70"                         # mean: 4 footways 100, 3 residential 30
     table = at.dataframe[0].value
-    assert table["Street"].tolist()[0].startswith("Row ")
+    assert list(table.columns) == ["Street", "Road type", "Traffic stress", "Speed used"]
+    assert table["Street"].tolist() == ["Row 0 Street", "Row 1 Street", "Row 2 Street"]
+    assert table["Traffic stress"].tolist() == [30, 30, 30]
+    assert table["Speed used"].tolist() == ["50 km/h (assumed)"] * 3   # no maxspeed in the fixture
+    assert at.expander[0].label == "How is this scored?"
+
+
+def test_app_example_button_scores_that_place(offline, monkeypatch, area_data):
+    asked = []
+    monkeypatch.setattr(pipeline, "area_from_place", lambda name: asked.append(name) or area_data.area)
+    at = _app()
+    at.sidebar.button(key="example_Sternschanze").click()
+    at.run()
+    assert not at.exception
+    assert asked == ["Sternschanze, Hamburg"]
+    assert at.sidebar.text_input(key="place_input").value == "Sternschanze, Hamburg"
+    assert at.subheader[0].value == "Sternschanze, Hamburg"
+
+
+def test_app_second_visit_uses_memory(offline, monkeypatch):
+    at = _run_app("Grid")
+    monkeypatch.setattr(pipeline, "fetch_area", lambda area, params: pytest.fail("downloaded again"))
+    at.run()
+    assert not at.exception and at.metric[1].value == "7"
 
 
 def test_app_shows_busy_message(monkeypatch):
@@ -142,12 +199,24 @@ def test_app_shows_busy_message(monkeypatch):
         raise ServerBusyError(["x"])
     monkeypatch.setattr(pipeline, "area_from_place", busy)
     at = _run_app("Somewhere busy")
-    assert at.error[0].value == fetch.BUSY_MESSAGE
+    assert fetch.BUSY_MESSAGE in at.error[0].value
+    assert "press **Score area** again" in at.error[0].value
 
 
-def test_app_shows_area_error(monkeypatch):
+def test_app_shows_area_error_with_hint(monkeypatch):
     def bad(name):
-        raise AreaError("'Bus stop' resolved to a Point, not an area")
+        raise AreaError("'Bus stop' was found as a single point, not an area.", hint="Try a district.")
     monkeypatch.setattr(pipeline, "area_from_place", bad)
     at = _run_app("Bus stop")
     assert "not an area" in at.error[0].value
+    assert "Try a district." in at.error[0].value
+
+
+def test_app_shows_unexpected_error_kindly(monkeypatch):
+    def broken(name):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(pipeline, "area_from_place", broken)
+    at = _run_app("Anywhere")
+    assert not at.exception
+    assert "Something went wrong" in at.error[0].value
+    assert at.expander[0].label == "Technical details"

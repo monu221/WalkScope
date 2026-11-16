@@ -77,8 +77,20 @@ def walk_filter() -> str:
 STREET_POINT_TAGS: dict[str, Any] = {"highway": ["crossing"], "crossing": True, "kerb": True}
 
 
+DEFAULT_AREA_HINT = ("Try a neighbourhood or district with its city, "
+                     "for example “Sternschanze, Hamburg”.")
+
+
 class AreaError(ValueError):
-    """Raised when a place can't be turned into a usable study area."""
+    """Raised when a place can't be turned into a usable study area.
+
+    `str(error)` says what went wrong; `hint` says what to try next. Both are
+    written for users.
+    """
+
+    def __init__(self, message: str, hint: str = DEFAULT_AREA_HINT):
+        super().__init__(message)
+        self.hint = hint
 
 
 # --- Overpass server and retry -----------------------------------------------
@@ -183,10 +195,14 @@ def area_from_place(name: str) -> BaseGeometry:
     except ServerBusyError:
         raise
     except Exception as e:  # OSMnx raises several types for "not found" / "not a polygon"
-        raise AreaError(f"Could not find an area boundary for {name!r}: {e}") from e
+        log.warning("Geocoding %r failed: %s", name, e)
+        raise AreaError(f"Could not find a place called “{name}”.") from e
     geom = gdf.geometry.iloc[0]
     if not isinstance(geom, (Polygon, MultiPolygon)):
-        raise AreaError(f"{name!r} resolved to a {geom.geom_type}, not an area; try a more specific name")
+        raise AreaError(
+            f"“{name}” was found as a single {geom.geom_type.lower()}, not an area.",
+            hint="Try a more specific name: a neighbourhood or district with its city.",
+        )
     return geom
 
 
@@ -249,7 +265,8 @@ def _download(buffered: BaseGeometry, tags: dict[str, Any]) -> tuple[nx.MultiDiG
     try:
         graph = with_retry(get_graph, server)
     except ox._errors.InsufficientResponseError as e:
-        raise AreaError("No walkable streets found in this area") from e
+        raise AreaError("No walkable streets found in this area.",
+                        hint="Check that the place is a town or neighbourhood, not a lake or forest.") from e
     features = with_retry(get_features, server)
     return graph, features
 

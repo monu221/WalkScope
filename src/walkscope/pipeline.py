@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import geopandas as gpd
 from shapely.geometry.base import BaseGeometry
@@ -24,6 +24,17 @@ from walkscope.network import Network, build_network
 # persona switch (build step 7) recomputes it from the stored sub-scores.
 DEFAULT_PERSONA = "general_adult"
 
+# Progress steps reported to the `progress` callback, in order.
+STEP_FIND = "Finding the place"
+STEP_DOWNLOAD = "Downloading map data"
+STEP_SCORE = "Scoring streets"
+
+Progress = Callable[[str], None]
+
+
+def _no_progress(step: str) -> None:
+    pass
+
 
 def area_km2(area: BaseGeometry) -> float:
     """Area of a lat/lon geometry in km²."""
@@ -31,7 +42,8 @@ def area_km2(area: BaseGeometry) -> float:
     return float(projected.to_crs(projected.estimate_utm_crs()).area.iloc[0] / 1e6)
 
 
-def score_area(area: BaseGeometry, params: dict[str, Any] | None = None) -> Network:
+def score_area(area: BaseGeometry, params: dict[str, Any] | None = None,
+               progress: Progress = _no_progress) -> Network:
     """Download, build and score one study area (EPSG:4326 polygon).
 
     Adds indicator columns to `network.segments`. So far: `traffic_stress`,
@@ -41,6 +53,7 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None) -> Netw
     `intersection_density` (per km²); `transit` and `transit_distance_m`
     (NaN if no stop within reach); `amenity` and one boolean column per
     category, `amenity_<category>`.
+    `progress` is called with STEP_DOWNLOAD and STEP_SCORE as each starts.
     Raises AreaError (too large, no streets) or fetch.ServerBusyError.
     """
     params = params or load_indicator_params()
@@ -48,16 +61,19 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None) -> Netw
     limit = params["area"]["max_km2"]
     if size > limit:
         raise AreaError(
-            f"This area is {size:.0f} km²; WalkScope handles up to {limit:g} km². "
-            "Try a neighbourhood or district instead of a whole town."
+            f"This area is {size:.0f} km²; WalkScope handles up to {limit:g} km².",
+            hint="Try a neighbourhood or district instead of a whole town.",
         )
 
-    net = build_network(fetch_area(area, params), params)
+    progress(STEP_DOWNLOAD)
+    data = fetch_area(area, params)
+    progress(STEP_SCORE)
+    net = build_network(data, params)
     seg = net.segments
     if not seg["scored"].any():
         raise AreaError(
-            "No streets to score inside this area; it may be a single square or building. "
-            "Try a neighbourhood or district."
+            "No streets to score inside this area; it may be a single square or building.",
+            hint="Try the surrounding neighbourhood or district.",
         )
     seg[["speed_kmh", "speed_tagged"]] = effective_speed(seg, params)
     seg["traffic_stress"] = traffic_score(seg, params)
@@ -79,6 +95,11 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None) -> Netw
     return net
 
 
-def score_place(name: str, params: dict[str, Any] | None = None) -> Network:
-    """Geocode a place name and score it. See score_area."""
-    return score_area(area_from_place(name), params)
+def score_place(name: str, params: dict[str, Any] | None = None,
+                progress: Progress = _no_progress) -> Network:
+    """Geocode a place name and score it. See score_area.
+
+    `progress` is called with STEP_FIND, STEP_DOWNLOAD and STEP_SCORE as each starts.
+    """
+    progress(STEP_FIND)
+    return score_area(area_from_place(name), params, progress)
