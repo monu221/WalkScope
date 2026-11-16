@@ -16,6 +16,7 @@ from walkscope.indicators.infrastructure import (
     split_street_points,
 )
 from walkscope.indicators.traffic import effective_speed, traffic_score
+from walkscope.indicators.transit import distance_score, stop_distance
 from walkscope.network import Network, build_network
 
 # Persona whose infrastructure mix fills the `infrastructure` column until the
@@ -36,7 +37,8 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None) -> Netw
     `speed_kmh`, `speed_tagged`; `infrastructure` (general-adult mix) and its
     sub-scores `infra_sidewalk`, `infra_crossing`, `infra_kerb`,
     `infra_surface`, `infra_lit`, `infra_base`; `connectivity` and
-    `intersection_density` (per km²).
+    `intersection_density` (per km²); `transit` and `transit_distance_m`
+    (NaN if no stop within reach).
     Raises AreaError (too large, no streets) or fetch.ServerBusyError.
     """
     params = params or load_indicator_params()
@@ -65,6 +67,9 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None) -> Netw
 
     seg["intersection_density"] = intersection_density(net.nodes, seg, params)
     seg["connectivity"] = connectivity_score(net.nodes, seg, params)
+
+    seg["transit_distance_m"] = stop_distance(net.graph, net.nodes, seg, net.stops, params)
+    seg["transit"] = distance_score(seg["transit_distance_m"], params)
     return net
 
 

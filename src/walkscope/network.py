@@ -51,6 +51,20 @@ def nearest_nodes(nodes: gpd.GeoDataFrame, points: gpd.GeoSeries) -> pd.Series:
     return ids.loc[points.index]
 
 
+def walk_distances(graph: nx.MultiDiGraph, sources: Iterable[Any], cutoff: float) -> dict[Any, float]:
+    """Shortest walking distance (metres, edge `length`) from the nearest source to every node within cutoff.
+
+    Walked as undirected: the graph keeps one-way streets one-way, but
+    pedestrians can use them in both directions. Nodes beyond the cutoff are
+    left out of the result.
+    """
+    sources = set(sources)
+    if not sources:
+        return {}
+    walk = graph.to_undirected(as_view=True) if graph.is_directed() else graph
+    return nx.multi_source_dijkstra_path_length(walk, sources, cutoff=cutoff, weight="length")
+
+
 def graph_to_segments(
     graph: nx.MultiDiGraph,
     nodes: gpd.GeoDataFrame,

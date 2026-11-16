@@ -118,6 +118,13 @@ The infrastructure score depends on the persona, but its sub-scores do not; they
 - Walking distance along the network to the nearest bus, tram or rail stop.
 - **100 within 300 m**, falling linearly to **0 at 800 m**. A segment with no stop reachable gets 0.
 
+### Walking distances
+
+Transit and amenity access use the same walking distance:
+
+- Each stop or amenity point is snapped to its nearest network node. The distance from the point to that node is not added.
+- Distances are walked along the full network, routing-only segments included, and **in both directions on one-way streets**. The downloaded graph keeps one-way roads one-way (1,322 of 22,443 edges in the Kreuzberg download), which matters for cars, not for pedestrians.
+
 ## Persona weights
 
 Starting point, to be tuned. Each row sums to 100.

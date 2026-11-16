@@ -49,6 +49,17 @@ def test_score_place_adds_connectivity_columns(offline):
     assert seg["connectivity"].between(0, 100).all()
 
 
+def test_score_place_adds_transit_columns(offline):
+    net = pipeline.score_place("Grid")
+    seg = net.segments
+    # The bus stop is at grid node 6 (column 0, row 2); streets are 100 m long,
+    # so the walking distance from node n is 100 m per grid step.
+    steps = seg["measure_node"].map(lambda n: (n % 3) + (2 - n // 3))
+    assert seg["transit_distance_m"].tolist() == pytest.approx((steps * 100).tolist())
+    assert seg["transit"].tolist() == pytest.approx(
+        [100 if d <= 300 else 80 for d in seg["transit_distance_m"]])
+
+
 def test_too_large_area_is_refused(monkeypatch):
     monkeypatch.setattr(pipeline, "area_from_place", lambda name: box(13.0, 52.3, 13.8, 52.7))  # ~Berlin
     with pytest.raises(AreaError, match="up to 5 km²"):
