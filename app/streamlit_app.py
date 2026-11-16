@@ -65,8 +65,8 @@ AREA_MODES = {"place": "Place name", "draw": "Draw on map"}
 DRAWN_KEY = "drawn_areas"       # session state: drawn-area name -> outline (WKT, lat/lon)
 WEAKEST_ROWS = 15
 CACHED_PLACES = 5
-BUSY_HINT = ("The public map server stayed busy for several minutes. Wait a few minutes, then press "
-             "**Score area** again. The examples and places you have scored before open in seconds.")
+BUSY_HINT = ("The public OpenStreetMap server is probably overloaded. Try this area again later, or open "
+             "one of the example areas in the sidebar: they don't need the server and open in seconds.")
 FIRST_RUN_NOTE = ("A new area downloads its map data from the public OpenStreetMap server, which often "
                   "takes 3–5 minutes and up to 10 when it is busy. Please keep this page open. "
                   "The examples and places you have scored before open in seconds.")

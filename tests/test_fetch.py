@@ -78,7 +78,7 @@ def test_all_attempts_fail_gives_busy_error(sleeps):
 
     with pytest.raises(ServerBusyError) as err:
         with_retry(fn, "https://a/api")
-    assert str(err.value) == BUSY_MESSAGE == "The map data server is busy. Please try again in a minute."
+    assert str(err.value) == BUSY_MESSAGE == "The map data server did not answer after several minutes."
     assert len(err.value.attempts) == 3
     assert sleeps == [5, 10]
 

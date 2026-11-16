@@ -221,7 +221,7 @@ def test_app_shows_busy_message(monkeypatch):
     monkeypatch.setattr(pipeline, "area_from_place", busy)
     at = _run_app("Somewhere busy")
     assert fetch.BUSY_MESSAGE in at.error[0].value
-    assert "press **Score area** again" in at.error[0].value
+    assert "Try this area again later" in at.error[0].value and "example areas" in at.error[0].value
 
 
 def test_app_shows_area_error_with_hint(monkeypatch):

@@ -144,7 +144,7 @@ MIN_TRY_S = 10            # don't start a try (or an OSMnx pause) with less time
 ox.settings.requests_timeout = REQUEST_TIMEOUT_S
 ox.settings.overpass_settings = f"[out:json][timeout:{REQUEST_TIMEOUT_S}]{{maxsize}}"
 
-BUSY_MESSAGE = "The map data server is busy. Please try again in a minute."
+BUSY_MESSAGE = "The map data server did not answer after several minutes."
 
 # Errors worth retrying: HTTP error status (502/504/429 when a server is at
 # capacity), timeouts, dropped connections, truncated responses.

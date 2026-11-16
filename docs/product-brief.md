@@ -30,7 +30,9 @@ These are listed as later milestones in the backlog.
 
 ## Success metric
 
-- A new area of about 2 km² is scored in under 60 seconds.
+- Scoring an area takes about 4 s once its map data is there (measured on a 1.5 km² area with about 1,600 scored segments, 2026-11-16).
+- Downloading a new area's map data from the public OpenStreetMap server typically takes 3–5 minutes. That time is set by the server's load and is outside the tool's control; the app shows progress while it waits.
+- The bundled example areas open in 5–6 s, without any download.
 - The score for one validation city correlates with an independent measure such as pedestrian counts.
 
 ## Stack
