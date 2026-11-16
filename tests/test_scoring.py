@@ -135,3 +135,15 @@ def test_apply_persona_remixes_infrastructure_and_scores_without_changing_input(
     assert night["infrastructure"].tolist() == [0.6 * 80 + 0.4 * 0, 0.6 * 100 + 0.4 * 100]
 
     pd.testing.assert_frame_equal(seg, before)                           # input untouched
+
+
+
+def test_street_design_score_uses_traffic_and_infrastructure_only():
+    from walkscope.scoring import street_design_score
+    seg = pd.DataFrame({"highway": ["residential", "steps"], "traffic_stress": [40.0, 100.0],
+                        "infrastructure": [80.0, 100.0], "amenity": [0.0, 0.0],
+                        "connectivity": [0.0, 0.0], "transit": [0.0, 0.0]})
+    adult = street_design_score(seg, PERSONAS["general_adult"])            # 15 : 20
+    assert adult.tolist() == pytest.approx([(15 * 40 + 20 * 80) / 35, 100])
+    wheel = street_design_score(seg, PERSONAS["wheelchair"])               # 15 : 40, steps impassable
+    assert wheel.tolist() == pytest.approx([(15 * 40 + 40 * 80) / 55, 0])

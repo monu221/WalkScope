@@ -180,7 +180,21 @@ The function is `scoring.area_summary`.
 
 ## Weakest streets
 
-The weakest-streets table lists the lowest-scoring segments that have a `name`. Unnamed segments, such as most footways and service roads, are left out of the table but still appear on the map.
+The weakest-streets table lists the lowest-scoring segments that have a `name`, one row per street (its lowest-scoring segment). Unnamed segments, such as most footways and service roads, are left out of the table but still appear on the map.
+
+On the walkability score, the table can be switched between:
+
+- **All indicators:** ranked by the combined score. A street can be weak here because of its surroundings (few intersections, no stop or amenities nearby), which changing the street itself doesn't fix.
+- **Street design only:** ranked by the **street design score**, the persona-weighted average of **traffic stress** and **pedestrian infrastructure** only, with the two weights rescaled to sum to 100 (general adult: 15 : 20). These are the properties of the street a planner can change. Impassable segments score 0 here too. The function is `scoring.street_design_score`.
+
+## Map colours
+
+The map has two colour scales:
+
+- **Relative to this area** (default): red to blue is stretched over the area's own 5th to 95th percentile of the shown score, so the weakest streets *in this area* show red even when every score is high (in Sternschanze the walkability score runs from about 60 to 99). Scores outside that range get the end colours. The range is widened to at least 10 points so a near-uniform area isn't shown as full red-to-blue. The legend shows the actual score at each end.
+- **Absolute (0–100):** the same colours for the same score in every area, for comparing areas.
+
+The function is `mapview.colour_range`.
 
 ## Scenarios
 
@@ -198,6 +212,8 @@ The tool shows, per area, the share of the scored network **length** (the rule i
 It also shows the mean of the three as one headline figure. This way a low score caused by missing data is not mistaken for a bad street. Each segment carries the flags `data_sidewalk`, `data_kerb` and `data_lit`; the figures come from `completeness.completeness`.
 
 The share of road length with a tagged speed limit is shown next to these, but is not part of the headline figure.
+
+**Caution for the selected persona.** Each persona's infrastructure score relies on certain data: every persona on sidewalk tags (the base score), and depending on its infrastructure mix on kerb data (wheelchair), surface tags (wheelchair; the share of scored length with a known `sidewalk:surface` or `surface` value, judged like the surface sub-score) or lighting tags (night). If any of these covers less than **50 %** of the network (`completeness.caution_below` in `config/indicators.yaml`), the app shows a caution next to the score naming the data and its share: where it is missing, that part is scored 50 (unknown), so the score is less reliable. The caution shows on the walkability score and the infrastructure view, the two that use this data. The function is `completeness.persona_gaps`.
 
 ## Known limitation
 

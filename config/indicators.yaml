@@ -180,3 +180,8 @@ transit:
     highway: [bus_stop]
     public_transport: [platform, stop_position, station]
     railway: [station, halt, tram_stop]
+
+completeness:
+  # Show a caution next to the score when data the selected persona relies on
+  # covers less than this share of the network length (docs/method.md).
+  caution_below: 0.5

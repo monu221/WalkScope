@@ -35,18 +35,36 @@ def impassable_mask(segments: pd.DataFrame, persona: Persona) -> pd.Series:
     return segments["highway"].map(lambda h: bool(blocked & set(road_classes(h)))).astype(bool)
 
 
+# Indicators that describe the street itself, which street design can change.
+STREET_DESIGN = ("traffic_stress", "infrastructure")
+
+
+def street_design_score(segments: pd.DataFrame, persona: Persona) -> pd.Series:
+    """Traffic stress and infrastructure only, weighted as in the persona (weights rescaled to 100).
+
+    Leaves out connectivity, transit and amenity, which depend on the
+    surroundings, so a low value means the street itself is the problem.
+    Segments impassable for the persona score 0.
+    """
+    total = sum(persona.weights[i] for i in STREET_DESIGN)
+    score = sum(segments[i] * persona.weights[i] for i in STREET_DESIGN) / total
+    score[impassable_mask(segments, persona)] = 0.0
+    return score.rename("street_design")
+
+
 def apply_persona(segments: pd.DataFrame, persona: Persona) -> pd.DataFrame:
     """Copy of the segments scored for one persona.
 
     Indicator scores don't depend on the persona and are computed once; this
     only re-mixes the infrastructure sub-scores with the persona's
     `infrastructure_mix` and adds the combined `score` and the `impassable`
-    flag. The input is not changed (it may be shared between app sessions).
+    flag, plus `street_design` (street_design_score). The input is not changed (it may be shared between app sessions).
     """
     out = segments.copy()
     out["infrastructure"] = infrastructure_score(out, persona)
     out["score"] = score_segments(out, persona)
     out["impassable"] = impassable_mask(out, persona)
+    out["street_design"] = street_design_score(out, persona)
     return out
 
 

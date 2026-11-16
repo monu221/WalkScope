@@ -65,3 +65,32 @@ def test_completeness_without_roads(segs, kerbs):
     c = completeness(segs[segs["highway"] == "footway"], PEDESTRIAN)
     assert np.isnan(c.sidewalk)
     assert c.mean == pytest.approx((0 + 1) / 2)            # kerb 0, lit 1; sidewalk left out
+
+
+
+def test_surface_flag_uses_the_first_tag_present(kerbs):
+    from walkscope.completeness import data_flags
+    segs = gpd.GeoDataFrame({
+        "highway": ["residential"] * 3, "lit": [None] * 3, "sidewalk": [None] * 3,
+        "sidewalk:surface": [None, "mud-ish", None], "surface": ["asphalt", "asphalt", None],
+        "length": [100.0] * 3, "scored": True,
+    }, geometry=[LineString([(0, 1000 * i), (100, 1000 * i)]) for i in range(3)], crs=CRS)
+    # Like the surface sub-score: an unknown sidewalk:surface value wins over a known surface.
+    assert data_flags(segs, kerbs, PARAMS)["data_surface"].tolist() == [True, False, False]
+
+
+def test_persona_gaps():
+    from walkscope.completeness import Completeness, persona_gaps
+    from walkscope.config import load_personas
+    personas = load_personas()
+    data = Completeness(sidewalk=0.8, kerb=0.25, lit=0.4, surface=0.6)
+    assert persona_gaps(data, personas["general_adult"], 0.5) == []
+    assert persona_gaps(data, personas["wheelchair"], 0.5) == [("kerb data", 0.25)]
+    assert persona_gaps(data, personas["night"], 0.5) == [("lighting tags", 0.4)]
+    assert persona_gaps(data, personas["wheelchair"], 0.7) == [("kerb data", 0.25), ("surface tags", 0.6)]
+    low = Completeness(sidewalk=0.3, kerb=0.9, lit=0.9, surface=float("nan"))
+    assert persona_gaps(low, personas["child"], 0.5) == [("sidewalk tags", 0.3)]
+
+
+def test_caution_threshold_in_config():
+    assert PARAMS["completeness"]["caution_below"] == 0.5

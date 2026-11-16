@@ -73,6 +73,9 @@ Each step ends with passing tests and a commit.
 7. **Persona switch.**
 8. **Scenarios:** add a crossing or an amenity.
 9. **Draw an area on the map** (streamlit-folium Draw plugin).
+   After this step, the Aachen example (now Lichtenbusch, a border village chosen because Aachen's
+   districts are over 5 km² or don't resolve to an area) should become a preset drawn area around
+   the city centre.
 10. **Report:** Markdown, then PDF.
 11. **Timing and validation:** a 2 km² area in under 60 s; correlation with pedestrian counts for the validation city.
 

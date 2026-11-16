@@ -188,7 +188,7 @@ def test_app_scores_a_place(offline):
     assert labels == ["Overall", "Sidewalk known", "Kerb data nearby", "Lighting tagged", "Speed limit tagged"]
     assert at.metric[5].value == "0%" and at.metric[7].value == "0%" and at.metric[8].value == "0%"
     table = at.dataframe[0].value
-    assert list(table.columns) == ["Street", "Road type", "Walkability score", "Weakest indicator"]
+    assert list(table.columns) == ["Street", "Score", "Weakest indicator", "Road type"]
     assert sorted(table["Street"]) == ["Row 0 Street", "Row 1 Street", "Row 2 Street"]
     assert table["Weakest indicator"].tolist() == ["Connectivity 0"] * 3   # the grid has no intersections
     assert at.expander[0].label == "How is this scored?"
@@ -262,11 +262,11 @@ def test_app_map_selector_shows_every_indicator(offline):
         assert not at.exception, label
         table = at.dataframe[0].value
         extra, first_values, scores = expected[label]
-        assert list(table.columns) == ["Street", "Road type", label, *extra]
+        assert list(table.columns) == ["Street", "Score", *extra, "Road type"]
         if first_values is not None:
             assert table[extra[0]].tolist() == first_values
         if scores is not None:
-            assert table[label].tolist() == scores
+            assert table["Score"].tolist() == scores
         assert at.metric[2].label == f"{label}, roads"
     assert table["Furthest category"].iloc[0] == "none within 800 m: school, café, doctor"
 
@@ -290,8 +290,50 @@ def test_app_persona_switch(offline):
     # Infrastructure for wheelchair users: 50 % base + 25 % kerb + 25 % surface (unknown: 50).
     # Row 0 Street: base 70, lowered kerb nearby (100); the other rows: base 30, no kerb data (50).
     at.sidebar.selectbox(key="view").set_value(2).run()
-    assert at.dataframe[0].value["Pedestrian infrastructure"].tolist() == [40, 40, 72]
+    assert at.dataframe[0].value["Score"].tolist() == [40, 40, 72]
 
     # Back to the general adult: the cached network was not changed by the wheelchair run.
     at.sidebar.selectbox(key="persona").set_value("general_adult").run()
-    assert at.dataframe[0].value["Pedestrian infrastructure"].tolist() == [30, 30, 70]
+    assert at.dataframe[0].value["Score"].tolist() == [30, 30, 70]
+
+
+
+def test_app_colour_scale_defaults_to_relative(offline):
+    at = _run_app("Grid")
+    scale = at.sidebar.radio(key="colour_scale")
+    assert scale.value == "relative"
+    assert scale.options == ["Relative to this area", "Absolute (0–100)"]
+    scale.set_value("absolute").run()
+    assert not at.exception
+
+
+def test_app_cautions_when_persona_data_is_sparse(offline):
+    # The grid has no sidewalk, surface or lighting tags and one kerb point.
+    at = _run_app("Grid")
+    assert len(at.warning) == 1
+    text = at.warning[0].value
+    assert "Less reliable for general adult" in text and "sidewalk tags cover only 0%" in text
+
+    at.sidebar.selectbox(key="persona").set_value("wheelchair").run()
+    text = at.warning[0].value
+    assert "wheelchair user" in text
+    assert "surface tags" in text and "kerb data" in text and "sidewalk tags" in text
+
+    at.sidebar.selectbox(key="view").set_value(1).run()         # traffic stress: persona data not used
+    assert len(at.warning) == 0
+
+
+def test_app_street_design_toggle(offline):
+    at = _run_app("Grid")
+    focus = at.button_group(key="table_focus")
+    assert focus.value == "all"
+    focus.set_value("design").run()
+    assert not at.exception
+    table = at.dataframe[0].value
+    assert list(table.columns) == ["Street", "Score", "Weakest indicator", "Road type"]
+    # Street design = (15 x traffic 75 + 20 x infrastructure) / 35; Row 0 has infrastructure 70.
+    assert table["Score"].tolist() == [round((15 * 75 + 20 * 30) / 35)] * 2 + [round((15 * 75 + 20 * 70) / 35)]
+    assert table["Weakest indicator"].tolist() == ["Pedestrian infrastructure 30"] * 2 + ["Pedestrian infrastructure 70"]
+
+    at.sidebar.selectbox(key="view").set_value(1).run()         # toggle only on the walkability view
+    assert len(at.button_group) == 0

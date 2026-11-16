@@ -84,3 +84,38 @@ def test_legend_html():
     assert "background:#fff" in html
     assert all(c in html for c in SCORE_COLORS)
     assert ">0<" in html and ">100<" in html
+
+
+
+def test_colour_range():
+    from walkscope.mapview import colour_range
+    values = pd.Series(range(40, 101))                        # 40..100
+    assert colour_range(values, relative=False) == (0, 100)
+    lo, hi = colour_range(values, relative=True)
+    assert (lo, hi) == (43, 97)                               # 5th / 95th percentile (exact here)
+    assert colour_range(values + 0.5, relative=True) == (43, 98)              # rounded outwards
+    assert colour_range(pd.Series([70.0] * 20), relative=True) == (65, 75)    # widened to 10 points
+    assert colour_range(pd.Series([100.0] * 5), relative=True) == (90, 100)   # kept inside 0-100
+    assert colour_range(pd.Series([], dtype=float), relative=True) == (0, 100)
+
+
+def test_relative_colours_and_legend(segs):
+    from walkscope.mapview import score_colormap
+    m = make_map(segs, "traffic_stress", "Traffic stress", vmin=30, vmax=100)
+    layer = geojson_layers(m)[-1]
+    colours = [layer.style_function(f)["color"] for f in layer.data["features"]]
+    cmap = score_colormap("x", 30, 100)
+    assert colours[0] == cmap(30) and colours[2] == cmap(30)  # below the range: the low end colour
+    html = legend_html("Walkability score", 43, 98, relative=True)
+    assert "relative to this area" in html
+    assert "≤ 43" in html and "≥ 98" in html and ">70<" in html
+    assert "Same scale for every area" in legend_html("Walkability score")
+
+
+def test_map_is_framed_on_the_study_area(segs):
+    from shapely.geometry import box
+    area = box(565000, 5932000, 567000, 5934000)              # 2 km square around the streets
+    m = make_map(segs, "traffic_stress", "Traffic stress", area=area)
+    html = m.get_root().render()
+    bounds = gpd.GeoSeries([area], crs=segs.crs).to_crs(4326).total_bounds
+    assert f"{bounds[1]}" in html and f"{bounds[3]}" in html  # fitBounds uses the area, not the streets
