@@ -60,6 +60,28 @@ def test_score_place_adds_transit_columns(offline):
         [100 if d <= 300 else 80 for d in seg["transit_distance_m"]])
 
 
+def test_score_place_adds_amenity_columns(offline):
+    seg = pipeline.score_place("Grid").segments
+    # Supermarket, park and pharmacy are all within 400 m of every grid node;
+    # no school, café or doctor -> 3 of 6 categories.
+    for cat in ("groceries", "park", "pharmacy"):
+        assert seg[f"amenity_{cat}"].all()
+    for cat in ("school", "cafe", "doctor"):
+        assert not seg[f"amenity_{cat}"].any()
+    assert seg["amenity"].eq(50).all()
+
+
+def test_all_indicators_present_for_combined_score(offline):
+    from walkscope.config import INDICATORS, load_personas
+    from walkscope.scoring import score_segments
+
+    seg = pipeline.score_place("Grid").segments
+    for persona in load_personas().values():
+        score = score_segments(seg, persona)
+        assert score.between(0, 100).all()
+    assert all(seg[i].notna().all() for i in INDICATORS)
+
+
 def test_too_large_area_is_refused(monkeypatch):
     monkeypatch.setattr(pipeline, "area_from_place", lambda name: box(13.0, 52.3, 13.8, 52.7))  # ~Berlin
     with pytest.raises(AreaError, match="up to 5 km²"):

@@ -9,6 +9,7 @@ from shapely.geometry.base import BaseGeometry
 
 from walkscope.config import load_indicator_params, load_personas
 from walkscope.fetch import AreaError, area_from_place, fetch_area
+from walkscope.indicators.amenity import amenities_reached, amenity_score
 from walkscope.indicators.connectivity import connectivity_score, intersection_density
 from walkscope.indicators.infrastructure import (
     infrastructure_score,
@@ -38,7 +39,8 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None) -> Netw
     sub-scores `infra_sidewalk`, `infra_crossing`, `infra_kerb`,
     `infra_surface`, `infra_lit`, `infra_base`; `connectivity` and
     `intersection_density` (per km²); `transit` and `transit_distance_m`
-    (NaN if no stop within reach).
+    (NaN if no stop within reach); `amenity` and one boolean column per
+    category, `amenity_<category>`.
     Raises AreaError (too large, no streets) or fetch.ServerBusyError.
     """
     params = params or load_indicator_params()
@@ -70,6 +72,10 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None) -> Netw
 
     seg["transit_distance_m"] = stop_distance(net.graph, net.nodes, seg, net.stops, params)
     seg["transit"] = distance_score(seg["transit_distance_m"], params)
+
+    reached = amenities_reached(net.graph, net.nodes, seg, net.pois, params)
+    seg[reached.columns] = reached
+    seg["amenity"] = amenity_score(reached)
     return net
 
 
