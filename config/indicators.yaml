@@ -10,6 +10,21 @@ walking:
 
 pedestrian_only_highways: [footway, pedestrian, path, steps]
 
+# Segments that stay in the graph for walking distances but are not scored or
+# shown. A segment is routing-only if, for any tag below, it has that tag and
+# every value of it is in the list (merged segments that are partly something
+# else stay scored).
+# - footway: a road's sidewalk or crossing (only for pedestrian-only segments);
+#   the road it belongs to carries its quality.
+# - service: parking aisles and driveways, not streets people walk along.
+# - access: private ways.
+# - highway: indoor corridors.
+routing_only:
+  footway: [sidewalk, crossing, traffic_island]
+  service: [parking_aisle, driveway]
+  access: [private]
+  highway: [corridor]
+
 amenity:
   # A category is reached if any matching feature is within walking.max_distance_m.
   # Score = categories reached / number of categories * 100.

@@ -32,6 +32,13 @@ def test_feature_tags_true_wins_over_list(params):
     assert feature_tags(params)["kerb"] is True
 
 
+def test_walk_filter_keeps_roads_with_separate_sidewalks():
+    f = fetch.walk_filter()
+    assert "separate" not in f                   # OSMnx's walk filter drops these roads
+    assert '["foot"!~"no"]' in f
+    assert "cycleway" in f and "motor" in f      # still excluded
+
+
 # --- classify_features --------------------------------------------------------
 
 def test_classify_splits_pois_stops_and_street_points(raw_features, params):

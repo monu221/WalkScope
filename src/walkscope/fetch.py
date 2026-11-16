@@ -31,7 +31,11 @@ truststore.inject_into_ssl()
 
 CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
 # Bump when the cached content or its shape changes, so old cache files are ignored.
-CACHE_VERSION = 1
+CACHE_VERSION = 2
+
+# All OSMnx HTTP responses (Nominatim and Overpass) are cached here.
+ox.settings.use_cache = True
+ox.settings.cache_folder = str(CACHE_DIR / "http")
 
 # Way tags kept on graph edges, on top of OSMnx's defaults (name, highway,
 # maxspeed, lanes, ...). The indicators read these.
@@ -46,6 +50,23 @@ EXTRA_WAY_TAGS = (
     "footway",
     "crossing",
 )
+
+def walk_filter() -> str:
+    """Overpass filter for the walking network.
+
+    Same as OSMnx's built-in "walk" filter, except that roads tagged
+    `sidewalk=separate` are kept. OSMnx drops them (their separately drawn
+    sidewalks carry the walking), but WalkScope needs the road to score traffic
+    stress and to name the street. See "Separately mapped sidewalks" in
+    docs/method.md.
+    """
+    return (
+        f'["highway"]["area"!~"yes"]{ox.settings.default_access}'
+        f'["highway"!~"abandoned|bus_guideway|construction|cycleway|motor|no|planned|'
+        f'platform|proposed|raceway|razed|rest_area|services"]'
+        f'["foot"!~"no"]["service"!~"private"]'
+    )
+
 
 # Point features on the street itself, used by the infrastructure indicator.
 STREET_POINT_TAGS: dict[str, Any] = {"highway": ["crossing"], "crossing": True, "kerb": True}
@@ -115,12 +136,12 @@ def feature_tags(params: dict[str, Any]) -> dict[str, Any]:
 
 def _download(buffered: BaseGeometry, tags: dict[str, Any]) -> tuple[nx.MultiDiGraph, gpd.GeoDataFrame]:
     """Fetch the walking graph and the features. The only function that hits the network."""
-    ox.settings.use_cache = True
-    ox.settings.cache_folder = str(CACHE_DIR / "http")
     defaults = list(ox.settings.useful_tags_way)
     ox.settings.useful_tags_way = defaults + [t for t in EXTRA_WAY_TAGS if t not in defaults]
     try:
-        graph = ox.graph_from_polygon(buffered, network_type="walk", simplify=True, retain_all=False)
+        graph = ox.graph_from_polygon(
+            buffered, custom_filter=walk_filter(), simplify=True, retain_all=False
+        )
     finally:
         ox.settings.useful_tags_way = defaults
     try:
@@ -191,6 +212,7 @@ def _cache_key(area: BaseGeometry, buffer_m: float, tags: dict[str, Any]) -> str
             "buffer_m": buffer_m,
             "tags": tags,
             "way_tags": EXTRA_WAY_TAGS,
+            "walk_filter": walk_filter(),
         },
         sort_keys=True,
     )

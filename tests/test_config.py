@@ -115,6 +115,12 @@ def test_shipped_indicator_params_match_method():
     assert params["infrastructure"]["crossing"]["search_radius_m"] == 50
     assert set(params["amenity"]["categories"]) == {"groceries", "school", "pharmacy", "park", "cafe", "doctor"}
     assert set(params["pedestrian_only_highways"]) == {"footway", "pedestrian", "path", "steps"}
+    assert params["routing_only"] == {
+        "footway": ["sidewalk", "crossing", "traffic_island"],
+        "service": ["parking_aisle", "driveway"],
+        "access": ["private"],
+        "highway": ["corridor"],
+    }
 
 
 def test_yaml_no_values_stay_strings():

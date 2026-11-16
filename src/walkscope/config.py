@@ -99,6 +99,7 @@ _REQUIRED_SECTIONS = (
     "area",
     "walking",
     "pedestrian_only_highways",
+    "routing_only",
     "amenity",
     "connectivity",
     "infrastructure",

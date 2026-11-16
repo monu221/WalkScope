@@ -1,13 +1,15 @@
 """Turn downloaded OSM data into the projected network and the segments table.
 
 The segments table is the core data structure: one row per street segment,
-in a metric CRS, with its OSM tags, its measuring node and whether it lies in
-the study area. Indicators add columns to it in later steps.
+in a metric CRS, with its OSM tags, its measuring node, whether it lies in
+the study area and whether it is scored. Indicators add columns to it in
+later steps.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Iterable, Mapping
 
 import geopandas as gpd
 import networkx as nx
@@ -16,10 +18,12 @@ import pandas as pd
 from shapely import STRtree
 from shapely.geometry.base import BaseGeometry
 
+from walkscope.config import load_indicator_params
 from walkscope.fetch import EXTRA_WAY_TAGS, AreaData
+from walkscope.tags import is_routing_only
 
 # Tag columns every segments table has, even if no street in the area carries the tag.
-TAG_COLUMNS = ("osmid", "name", "highway", "maxspeed", "lanes", *EXTRA_WAY_TAGS)
+TAG_COLUMNS = ("osmid", "name", "highway", "service", "access", "maxspeed", "lanes", *EXTRA_WAY_TAGS)
 
 
 @dataclass
@@ -47,12 +51,22 @@ def nearest_nodes(nodes: gpd.GeoDataFrame, points: gpd.GeoSeries) -> pd.Series:
     return ids.loc[points.index]
 
 
-def graph_to_segments(graph: nx.MultiDiGraph, nodes: gpd.GeoDataFrame, area: BaseGeometry) -> gpd.GeoDataFrame:
+def graph_to_segments(
+    graph: nx.MultiDiGraph,
+    nodes: gpd.GeoDataFrame,
+    area: BaseGeometry,
+    pedestrian_only: Iterable[str] = (),
+    routing_only_rules: Mapping[str, Iterable[str]] | None = None,
+) -> gpd.GeoDataFrame:
     """Build the segments table from a projected walking graph.
 
-    Columns: u, v, key, length, geometry, the TAG_COLUMNS, `measure_node`
-    (graph node nearest the segment midpoint) and `in_area` (midpoint inside
-    the study area). Index: `segment_id`, 0..n-1.
+    Columns: u, v, key, length, geometry, the TAG_COLUMNS, and
+    - `measure_node`: graph node nearest the segment midpoint;
+    - `in_area`: midpoint inside the study area;
+    - `routing_only`: kept for walking distances only (a road's sidewalk or
+      crossing, parking aisle, driveway, private way, corridor; see config);
+    - `scored`: in_area and not routing_only (the segments shown and scored).
+    Index: `segment_id`, 0..n-1.
 
     OSMnx walk graphs store every street in both directions; the graph is made
     undirected first so each street appears once. Tags merged by OSMnx
@@ -68,15 +82,25 @@ def graph_to_segments(graph: nx.MultiDiGraph, nodes: gpd.GeoDataFrame, area: Bas
     midpoints = edges.geometry.interpolate(0.5, normalized=True)
     edges["measure_node"] = nearest_nodes(nodes, midpoints).to_numpy()
     edges["in_area"] = midpoints.within(area).to_numpy()
+    pedestrian_only = list(pedestrian_only)
+    rules = dict(routing_only_rules or {})
+    rule_cols = sorted(set(rules) | {"highway"})
+    edges["routing_only"] = [
+        is_routing_only(dict(zip(rule_cols, values)), pedestrian_only, rules)
+        for values in zip(*(edges[c] for c in rule_cols))
+    ]
+    edges["scored"] = edges["in_area"] & ~edges["routing_only"]
 
-    cols = ["u", "v", "key", "length", *TAG_COLUMNS, "measure_node", "in_area", "geometry"]
+    cols = ["u", "v", "key", "length", *TAG_COLUMNS,
+            "measure_node", "in_area", "routing_only", "scored", "geometry"]
     segments = gpd.GeoDataFrame(edges[cols], geometry="geometry", crs=edges.crs)
     segments.index.name = "segment_id"
     return segments
 
 
-def build_network(data: AreaData) -> Network:
+def build_network(data: AreaData, params: dict[str, Any] | None = None) -> Network:
     """Project graph, area and features to the graph's local UTM zone and build segments."""
+    params = params or load_indicator_params()
     graph = ox.project_graph(data.graph)
     crs = graph.graph["crs"]
     nodes = ox.graph_to_gdfs(graph, edges=False)
@@ -84,12 +108,15 @@ def build_network(data: AreaData) -> Network:
         nodes["street_count"] = pd.Series(ox.stats.count_streets_per_node(graph))
     area = gpd.GeoSeries([data.area], crs="EPSG:4326").to_crs(crs).iloc[0]
 
+    segments = graph_to_segments(
+        graph, nodes, area, params["pedestrian_only_highways"], params["routing_only"]
+    )
     return Network(
         crs=str(crs),
         area=area,
         graph=graph,
         nodes=nodes[["street_count", "geometry"]],
-        segments=graph_to_segments(graph, nodes, area),
+        segments=segments,
         pois=data.pois.to_crs(crs),
         stops=data.stops.to_crs(crs),
         street_points=data.street_points.to_crs(crs),

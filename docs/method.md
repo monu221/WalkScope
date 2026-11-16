@@ -18,6 +18,41 @@ Each street segment gets five indicator scores from 0 to 100, combined as a weig
 - Distances for a segment are measured from the **network node nearest to the segment midpoint**.
 - Footways, pedestrian streets, paths and steps are scored as segments like any other street. Together they form the *pedestrian-only* class used below.
 
+## Routing-only segments
+
+Some segments are kept in the walking network, so they count for walking distances to amenities and stops, but they are **not scored and not shown**. A segment is routing-only if it has one of these tags and every value of that tag is in the list (`routing_only` in the config):
+
+| Tag | Values | Why |
+| --- | --- | --- |
+| `footway` (pedestrian-only segments only) | `sidewalk`, `crossing`, `traffic_island` | Part of a road; the road carries their quality (see below) |
+| `service` | `parking_aisle`, `driveway` | Not streets people walk along |
+| `access` | `private` | Not public. OSMnx already leaves most of these out of the download |
+| `highway` | `corridor` | Indoor passages |
+
+A merged segment that is only partly one of these, such as `steps` + `corridor`, stays scored.
+
+## Separately mapped sidewalks
+
+OpenStreetMap has two ways to map a sidewalk:
+
+- **As a tag on the road:** `sidewalk=both/left/right/no`. This is common in most German cities.
+- **As its own way:** `highway=footway` + `footway=sidewalk` next to the road, with the road tagged `sidewalk=separate`. This is common in Berlin.
+
+OSMnx's built-in walking network drops every road tagged `sidewalk=separate`. In Berlin that removes nearly all streets. Only the sidewalk ways remain, and they would count as pedestrian-only, scoring 100 on traffic stress and infrastructure even beside a four-lane main road. A 480 m × 450 m test area in Kreuzberg contained 306 segments, but no residential or main street, and only 5 had a name.
+
+WalkScope therefore downloads with OSMnx's walk filter **minus** the `sidewalk=separate` clauses (`walk_filter()` in `fetch.py`). Roads are kept and scored, and their separately drawn sidewalks and crossings are routing-only. A road tagged `sidewalk=separate` scores 100 on the sidewalk sub-score, and its own speed and lanes set its traffic stress.
+
+Kreuzberg test area (about 2 km², lon 13.383–13.403, lat 52.484–52.4965), after this change:
+
+| | Segments |
+| --- | --- |
+| In the study area | 2,996 |
+| Routing-only | 1,723 (1,148 sidewalk/crossing ways, 568 driveways and parking aisles, 7 corridors) |
+| **Scored** | **1,273**, of which 59 % have a name |
+| Scored by class | 438 residential, 390 footway, 155 secondary, 80 service, 72 tertiary, 60 primary, 30 path, 48 other (steps, links, merged) |
+
+Of the 1,399 roads (non-pedestrian segments) in the area before driveways and parking aisles were removed, 53 % had a sidewalk tag, and 51 % were `sidewalk=separate`.
+
 ## Indicator definitions
 
 ### Amenity access
@@ -114,3 +149,5 @@ It also shows the mean of the three as one headline figure. This way a low score
 ## Known limitation
 
 OpenStreetMap tagging of sidewalks, kerbs and lighting is incomplete in many cities. Every missing tag is handled with the explicit assumption listed above, and counts toward the data-completeness figure where relevant.
+
+**Separate sidewalk without a tag on the road.** A road can have a `footway=sidewalk` way drawn beside it, but no `sidewalk=separate` (or any other sidewalk tag) on the road itself. WalkScope does not detect this. Such a road gets the missing-tag sidewalk score of 50, and counts as missing in the data-completeness figure. In the Kreuzberg test area this does not happen on real streets: every residential, tertiary, secondary and primary road had a sidewalk tag. Of the 651 roads without a sidewalk tag, 628 were service roads. 432 of these had a sidewalk way within 15 m along at least half their length, but that was mostly the main street's sidewalk passing a driveway or courtyard entrance, not a sidewalk belonging to the service road. Most of those service roads are now routing-only anyway (driveways and parking aisles). If other cities show the problem on real streets, a geometric check (a sidewalk way within about 15 m along most of the road) can be added later.

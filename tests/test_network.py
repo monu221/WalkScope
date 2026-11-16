@@ -37,6 +37,37 @@ def test_in_area_uses_segment_midpoint(net):
     assert (outside.geometry.interpolate(0.5, normalized=True).x > net.area.bounds[2]).all()
 
 
+def test_plain_footways_are_scored(net):
+    # The fixture's footways have no `footway=` tag: paths of their own, so scored.
+    assert (net.segments["scored"] == net.segments["in_area"]).all()
+    assert not net.segments["routing_only"].any()
+
+
+def test_sidewalk_ways_are_routing_only(area_data):
+    # Tag the in-area footway between nodes 0 and 3 as a road's sidewalk.
+    for u, v in ((0, 3), (3, 0)):
+        area_data.graph.edges[u, v, 0]["footway"] = "sidewalk"
+    net = build_network(area_data)
+    seg = net.segments
+    sidewalk = seg[seg["footway"] == "sidewalk"]
+    assert len(sidewalk) == 1
+    assert sidewalk["in_area"].iloc[0] and sidewalk["routing_only"].iloc[0]
+    assert not sidewalk["scored"].iloc[0]
+    assert seg["scored"].sum() == 6                  # 7 in area minus the sidewalk
+    assert net.graph.has_edge(0, 3)                  # still in the graph for walking distances
+
+
+def test_driveways_and_corridors_are_routing_only(area_data):
+    for u, v in ((0, 1), (1, 0)):                    # in-area residential street
+        area_data.graph.edges[u, v, 0].update(highway="service", service="driveway")
+    for u, v in ((1, 4), (4, 1)):                    # in-area footway
+        area_data.graph.edges[u, v, 0]["highway"] = "corridor"
+    seg = build_network(area_data).segments
+    assert seg.loc[seg["service"] == "driveway", "routing_only"].all()
+    assert seg.loc[seg["highway"] == "corridor", "routing_only"].all()
+    assert seg["scored"].sum() == 5
+
+
 def test_measure_node_is_nearest_to_midpoint(net):
     segs = net.segments
     assert all(m in (u, v) for m, u, v in zip(segs["measure_node"], segs["u"], segs["v"]))
