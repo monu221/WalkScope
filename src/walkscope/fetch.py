@@ -102,6 +102,8 @@ STREET_POINT_TAGS: dict[str, Any] = {"highway": ["crossing"], "crossing": True, 
 
 DEFAULT_AREA_HINT = ("Try a neighbourhood or district with its city, "
                      "for example “Sternschanze, Hamburg”.")
+# For a place name that can't be used as it is: drawing the area always works.
+DRAW_HINT = "use **Draw on map** to outline the area yourself"
 
 
 class AreaError(ValueError):
@@ -299,12 +301,17 @@ def area_from_place(name: str) -> BaseGeometry:
         raise
     except Exception as e:  # OSMnx raises several types for "not found" / "not a polygon"
         log.warning("Geocoding %r failed: %s", name, e)
-        raise AreaError(f"Could not find a place called “{name}”.") from e
+        raise AreaError(
+            f"Could not find a place called “{name}” with a boundary in OpenStreetMap.",
+            hint=f"Check the spelling and add the city, e.g. “Sternschanze, Hamburg”. If the place has "
+                 f"no boundary in OpenStreetMap, {DRAW_HINT}.",
+        ) from e
     geom = gdf.geometry.iloc[0]
     if not isinstance(geom, (Polygon, MultiPolygon)):
         raise AreaError(
-            f"“{name}” was found as a single {geom.geom_type.lower()}, not an area.",
-            hint="Try a more specific name: a neighbourhood or district with its city.",
+            f"“{name}” was found as a single {geom.geom_type.lower()}, not an area: it has no boundary "
+            f"in OpenStreetMap.",
+            hint=f"Try the neighbourhood or district around it, or {DRAW_HINT}.",
         )
     return geom
 

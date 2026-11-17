@@ -98,8 +98,13 @@ def test_all_indicators_present_for_combined_score(offline):
 
 def test_too_large_area_is_refused(monkeypatch):
     monkeypatch.setattr(pipeline, "area_from_place", lambda name: box(13.0, 52.3, 13.8, 52.7))  # ~Berlin
-    with pytest.raises(AreaError, match="up to 5 km²"):
+    with pytest.raises(AreaError, match="up to 5 km²") as e:
         pipeline.score_place("Berlin")
+    assert "**Draw on map**" in e.value.hint and "(up to 5 km²)" in e.value.hint
+
+    with pytest.raises(AreaError, match="up to 5 km²") as e:          # a drawn area: draw a smaller one
+        pipeline.score_area(box(13.0, 52.3, 13.8, 52.7))
+    assert e.value.hint.startswith("Draw a smaller area")
 
 
 def test_area_without_streets_is_refused(monkeypatch, area_data):
@@ -222,6 +227,19 @@ def test_app_shows_busy_message(monkeypatch):
     at = _run_app("Somewhere busy")
     assert fetch.BUSY_MESSAGE in at.error[0].value
     assert "Try this area again later" in at.error[0].value and "example areas" in at.error[0].value
+
+
+def test_app_place_help_until_the_first_search(offline):
+    at = _app()
+    help_text = [c.value for c in at.sidebar.caption if c.value.startswith("Works for districts")]
+    assert help_text == [
+        "Works for districts, neighbourhoods and villages up to 5 km² that have a boundary in OpenStreetMap, "
+        "e.g. “Sternschanze, Hamburg”. For anything else, use **Draw on map**. New areas take 3–5 minutes to "
+        "download; the examples open instantly. Speed defaults follow German rules."]
+    at.sidebar.text_input(key="place_input").input("Grid")
+    at.sidebar.button[0].click().run()
+    assert not at.exception
+    assert not any(c.value.startswith("Works for districts") for c in at.sidebar.caption)
 
 
 def test_app_shows_area_error_with_hint(monkeypatch):

@@ -69,6 +69,10 @@ WHATIF_MODES = {CROSSING: "Marked crossing", AMENITY: "Amenity"}     # none sele
 WHATIF_SHOW = {"after": "After", "before": "Before"}
 CHANGED_ROWS = 10
 AREA_MODES = {"place": "Place name", "draw": "Draw on map"}
+PLACE_HELP = ("Works for districts, neighbourhoods and villages up to {km2:g} km² that have a boundary in "
+              "OpenStreetMap, e.g. “Sternschanze, Hamburg”. For anything else, use **Draw on map**. "
+              "New areas take 3–5 minutes to download; the examples open instantly. "
+              "Speed defaults follow German rules.")
 DRAWN_KEY = "drawn_areas"       # session state: drawn-area name -> outline (WKT, lat/lon)
 WEAKEST_ROWS = 15
 # Width (px) the weakest-streets table's columns are sized to (column_widths), not counting the
@@ -389,8 +393,12 @@ def render_sidebar() -> tuple[View, Persona, bool, bool]:
             with st.form("place_form", border=False):
                 typed = st.text_input("Place", key="place_input", placeholder="e.g. Sternschanze, Hamburg",
                                       help="A neighbourhood or district, up to 5 km².")
+                help_slot = st.empty()                               # help text until the first search
+                if "selected_place" not in st.session_state:
+                    help_slot.caption(PLACE_HELP.format(km2=_params()["area"]["max_km2"]))
                 if st.form_submit_button("Score area", type="primary", width="stretch") and typed.strip():
                     st.session_state["selected_place"] = typed.strip()
+                    help_slot.empty()
         else:
             st.caption("Draw a polygon or rectangle on the map, up to 5 km², then press **Score drawn area**.")
 

@@ -9,7 +9,7 @@ from shapely.geometry.base import BaseGeometry
 
 from walkscope.completeness import data_flags
 from walkscope.config import load_indicator_params, load_personas
-from walkscope.fetch import AreaError, area_from_place, fetch_area
+from walkscope.fetch import DRAW_HINT, AreaError, area_from_place, fetch_area
 from walkscope.indicators.amenity import amenity_distances, amenity_score, category_scores
 from walkscope.indicators.connectivity import connectivity_score, intersection_density
 from walkscope.indicators.infrastructure import (
@@ -60,13 +60,7 @@ def score_area(area: BaseGeometry, params: dict[str, Any] | None = None,
     Raises AreaError (too large, no streets) or fetch.ServerBusyError.
     """
     params = params or load_indicator_params()
-    size = area_km2(area)
-    limit = params["area"]["max_km2"]
-    if size > limit:
-        raise AreaError(
-            f"This area is {size:.0f} km²; WalkScope handles up to {limit:g} km².",
-            hint="Try a neighbourhood or district instead of a whole town.",
-        )
+    check_size(area, params, hint="Draw a smaller area, or a neighbourhood or district instead of a whole town.")
 
     progress(STEP_DOWNLOAD)
     data = fetch_area(area, params, progress=progress)
@@ -111,4 +105,17 @@ def score_place(name: str, params: dict[str, Any] | None = None,
     `progress` is called with STEP_FIND, STEP_DOWNLOAD and STEP_SCORE as each starts.
     """
     progress(STEP_FIND)
-    return score_area(area_from_place(name), params, progress)
+    params = params or load_indicator_params()
+    area = area_from_place(name)
+    limit = params["area"]["max_km2"]
+    check_size(area, params, hint=f"Try a neighbourhood or district instead of the whole town, or "
+                                  f"{DRAW_HINT} (up to {limit:g} km²).")
+    return score_area(area, params, progress)
+
+
+def check_size(area: BaseGeometry, params: dict[str, Any], hint: str) -> None:
+    """Raise AreaError (with `hint`) if the area is larger than params["area"]["max_km2"]."""
+    size = area_km2(area)
+    limit = params["area"]["max_km2"]
+    if size > limit:
+        raise AreaError(f"This area is {size:.0f} km²; WalkScope handles up to {limit:g} km².", hint=hint)

@@ -193,16 +193,18 @@ def test_classify_handles_no_features(params):
 def test_area_from_place_rejects_points(monkeypatch):
     monkeypatch.setattr(fetch.ox, "geocode_to_gdf",
                         lambda name: gpd.GeoDataFrame(geometry=[Point(13.4, 52.5)], crs="EPSG:4326"))
-    with pytest.raises(AreaError, match="not an area"):
+    with pytest.raises(AreaError, match="not an area: it has no boundary") as e:
         area_from_place("Some Bus Stop")
+    assert "**Draw on map**" in e.value.hint
 
 
 def test_area_from_place_wraps_lookup_errors(monkeypatch):
     def fail(name):
         raise ValueError("Nominatim could not geocode query")
     monkeypatch.setattr(fetch.ox, "geocode_to_gdf", fail)
-    with pytest.raises(AreaError, match="Could not find"):
+    with pytest.raises(AreaError, match="Could not find a place called “Nowhere” with a boundary") as e:
         area_from_place("Nowhere")
+    assert "check the spelling" in e.value.hint.lower() and "**Draw on map**" in e.value.hint
 
 
 def test_buffer_area_adds_distance_in_metres(grid_area):
