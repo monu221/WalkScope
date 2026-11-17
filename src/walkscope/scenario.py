@@ -163,7 +163,7 @@ def item_noun(kind: str, category: str | None = None) -> str:
 @dataclass(frozen=True)
 class EditOutcome:
     improved: int           # scored segments whose `column` rose by more than IMPROVED_BY
-    streets: int            # named streets that improved, as listed by changed_streets
+    streets: int            # named streets that improved, as the what-if table (changed_streets) lists them
     before_mean: float      # length-weighted mean of `column` over roads, without / with the edit
     after_mean: float
     message: str            # what to tell the user: the gain, or why there is none
@@ -176,14 +176,16 @@ def edit_outcome(net: Network, edits: list[Edit], edit: Edit, persona: Persona, 
     Raises ScenarioError (as check_edit) if the edit can't be placed.
     """
     before = apply_persona(apply_edits(net, edits, params)[0], persona)
-    after = apply_persona(apply_edits(net, [*edits, edit], params)[0], persona)
+    after_raw, changed = apply_edits(net, [*edits, edit], params)
+    after = apply_persona(after_raw, persona)
     scored = before["scored"].to_numpy()
     gain = (after[column] - before[column])[scored]
     improved = int((gain > IMPROVED_BY).sum())
     ped = params["pedestrian_only_highways"]
     b, a = area_summary(before, column, ped).road_mean, area_summary(after, column, ped).road_mean
     noun = item_noun(edit.kind, edit.category)
-    streets = int((changed_streets(before, after, before.index, column, n=len(before))["Change"] > 0).sum())
+    # Per street over the changed segments, as the what-if table counts them.
+    streets = int((changed_streets(before, after, changed, column, n=len(before))["Change"] > 0).sum())
     if improved:
         count, what = (streets, "street") if streets else (improved, "unnamed segment")
         s = "" if count == 1 else "s"
@@ -209,12 +211,42 @@ def _why_no_gain(before: pd.DataFrame, after: pd.DataFrame, scored: np.ndarray, 
     s = "" if touched == 1 else "s"
     if column not in (indicator, "score"):
         return (f"it raised {ind_label.lower()} on {touched} segment{s}, but the map shows "
-                f"{column_label.lower()}, which doesn't count it. Switch \"Map shows\" to "
-                f"Walkability score or {ind_label} to see the change.")
+                f"{column_label.lower()}, which doesn't count it.")
     if column == "score" and not persona.weights.get(indicator):
         return f"{ind_label.lower()} has no weight for the {persona.label.lower()} persona."
     return (f"it changed {ind_label.lower()} on {touched} segment{s}, but no {column_label.lower()} "
             f"rose by more than {IMPROVED_BY:g} points.")
+
+
+@dataclass(frozen=True)
+class EffectNote:
+    text: str                   # one line on how big the effect of one item can be
+    switch_to: str | None       # indicator column that shows the full effect, if the map shows another
+
+
+def effect_note(kind: str, category: str | None, persona: Persona, column: str,
+                params: dict[str, Any]) -> EffectNote:
+    """Why one item moves the scores only a little: what share of the score it can change.
+
+    E.g. "A grocery shop covers 1 of 6 amenity categories (amenity access is 30% of the general adult
+    persona's walkability score)."; plus a hint to switch the map to that indicator when it shows another.
+    """
+    indicator = EDIT_INDICATOR[kind]
+    ind_label = INDICATOR_LABELS[indicator]
+    weight = persona.weights.get(indicator, 0)
+    share = (f"{ind_label.lower()} is {weight:g}% of the {persona.label.lower()} persona's walkability score")
+    noun = item_noun(kind, category)
+    if kind == CROSSING:
+        infra = params["infrastructure"]
+        part = infra["base_mix"]["crossing"] * persona.infrastructure_mix.get("base", 0) / 100
+        text = (f"A {noun} counts only for roads within {infra['crossing']['search_radius_m']:g} m, as "
+                f"{part:g}% of their {ind_label.lower()} ({share}).")
+    else:
+        n = len(params["amenity"]["categories"])
+        text = f"A {noun} covers 1 of {n} amenity categories ({share})."
+    if column == indicator:
+        return EffectNote(text, None)
+    return EffectNote(f"{text} Switch Map shows to {ind_label} to see the full effect.", indicator)
 
 
 CHANGE_COLUMNS = ["Street", "Before", "After", "Change"]
@@ -225,7 +257,8 @@ def changed_streets(before: pd.DataFrame, after: pd.DataFrame, changed: pd.Index
     """Named streets whose `column` changed, most improved first: Street, Before, After, Change.
 
     Per street, the length-weighted mean over its changed scored segments,
-    rounded; streets whose rounded change is 0 are left out.
+    rounded; Change is After - Before of the rounded values, so the three
+    always agree. Streets whose Change is 0 are left out.
     """
     ids = changed.intersection(before.index[before["scored"]])
     rows = pd.DataFrame({
@@ -240,6 +273,7 @@ def changed_streets(before: pd.DataFrame, after: pd.DataFrame, changed: pd.Index
         lambda g: pd.Series({"Before": length_weighted_mean(g["Before"], g["length"]),
                              "After": length_weighted_mean(g["After"], g["length"])}),
         include_groups=False).reset_index()
+    by_street[["Before", "After"]] = by_street[["Before", "After"]].round().astype(int)
     by_street["Change"] = by_street["After"] - by_street["Before"]
-    by_street = by_street[by_street["Change"].round() != 0].sort_values("Change", ascending=False)
-    return by_street.head(n).round().astype({"Before": int, "After": int, "Change": int})[CHANGE_COLUMNS]
+    by_street = by_street[by_street["Change"] != 0].sort_values("Change", ascending=False, kind="stable")
+    return by_street.head(n)[CHANGE_COLUMNS].reset_index(drop=True)

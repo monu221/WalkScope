@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -45,15 +45,19 @@ INDICATOR_LABELS = {
 }
 
 
-def weakest_indicator(seg: pd.DataFrame, columns: Sequence[str] = tuple(INDICATOR_LABELS)) -> pd.Series:
+def weakest_indicator(seg: pd.DataFrame, columns: Sequence[str] = tuple(INDICATOR_LABELS),
+                      labels: Mapping[str, str] = INDICATOR_LABELS,
+                      impassable: str = "impassable for this persona (steps)") -> pd.Series:
     """The lowest of the indicator scores in `columns`, e.g. 'Traffic stress 11', or why the segment scores 0.
 
-    Needs the `impassable` column from apply_persona.
+    `labels` names the indicators and `impassable` is the text for a segment the
+    persona can't use (shorter ones fit a narrow table). Needs the `impassable`
+    column from apply_persona.
     """
     scores = seg[list(columns)]
     lowest = scores.idxmin(axis=1)
-    text = lowest.map(INDICATOR_LABELS) + " " + scores.min(axis=1).round().astype(int).astype(str)
-    return text.where(~seg["impassable"], "impassable for this persona (steps)")
+    text = lowest.map(labels) + " " + scores.min(axis=1).round().astype(int).astype(str)
+    return text.where(~seg["impassable"], impassable)
 
 
 # Indicators that describe the street itself, which street design can change.

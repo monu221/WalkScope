@@ -356,7 +356,7 @@ def test_app_street_design_toggle(offline):
     assert list(table.columns) == ["Street", "Score", "Weakest indicator", "Road type"]
     # Street design = (15 x traffic 75 + 20 x infrastructure) / 35; Row 0 has infrastructure 70.
     assert table["Score"].tolist() == [round((15 * 75 + 20 * 30) / 35)] * 2 + [round((15 * 75 + 20 * 70) / 35)]
-    assert table["Weakest indicator"].tolist() == ["Pedestrian infrastructure 30"] * 2 + ["Pedestrian infrastructure 70"]
+    assert table["Weakest indicator"].tolist() == ["Infrastructure 30"] * 2 + ["Infrastructure 70"]
 
     at.sidebar.selectbox(key="view").set_value(1).run()         # toggle only on the walkability view
     assert not any(b.key == "table_focus" for b in at.button_group)
@@ -460,12 +460,13 @@ def test_app_after_a_placement_shows_the_result_and_the_after_state(offline):
     at.run()
     at.button_group(key="whatif_show").set_value("before").run()          # the user was looking at "before"
     at.session_state["edits|Grid"] = [Edit(CROSSING, *grid_xy(0.3, 1)), Edit(CROSSING, *grid_xy(1.3, 2))]
-    at.session_state["whatif_result"] = (True, "Added a marked crossing: 1 street segment improved.")
+    at.session_state["whatif_result"] = (True, "Added a marked crossing: 1 street improved.")
+    at.session_state["whatif_last"] = ("crossing", None)
     at.session_state["whatif_show_after"] = True
     at.run()
     assert not at.exception
     assert at.button_group(key="whatif_show").value == "after"
-    assert at.success[0].value == "Added a marked crossing: 1 street segment improved."
+    assert at.success[0].value == "Added a marked crossing: 1 street improved."
 
     at.session_state["whatif_result"] = (False, "Added a marked crossing, but nothing improved: …")
     at.run()
@@ -473,6 +474,50 @@ def test_app_after_a_placement_shows_the_result_and_the_after_state(offline):
 
     next(b for b in at.button if b.label == "Undo last").click().run()
     assert not at.success and not any("nothing improved" in w.value for w in at.warning)
+
+
+def test_app_effect_note_and_switch_to_the_indicator(offline):
+    # The state handle_click leaves after an amenity was placed, with the map on the walkability score.
+    from tests.conftest import grid_xy
+    from walkscope.scenario import AMENITY, Edit
+
+    at = _run_app("Grid")
+    at.session_state["edits|Grid"] = [Edit(AMENITY, *grid_xy(0, 0), category="groceries")]
+    at.session_state["whatif_result"] = (True, "Added a grocery shop: 3 streets improved.")
+    at.session_state["whatif_last"] = (AMENITY, "groceries")
+    at.run()
+    assert not at.exception
+    note = next(c.value for c in at.caption if c.value.startswith("A grocery shop"))
+    assert note == ("A grocery shop covers 1 of 6 amenity categories (amenity access is 30% of the general "
+                    "adult persona's walkability score). Switch Map shows to Amenity access to see the full "
+                    "effect.")
+
+    at.button(key="whatif_switch_view").click().run()
+    assert not at.exception
+    assert at.sidebar.selectbox(key="view").value == 5                 # Amenity access
+    note = next(c.value for c in at.caption if c.value.startswith("A grocery shop"))
+    assert "Switch" not in note
+    assert not any(b.key == "whatif_switch_view" for b in at.button)
+
+
+def _weakest_widths(at):
+    """Column widths (px) the weakest-streets table was drawn with."""
+    import json
+    table = next(d for d in at.dataframe if "Road type" in d.value.columns)
+    config = json.loads(table.proto.columns)
+    return {name: config[name]["width"] for name in table.value.columns}
+
+
+def test_weakest_table_columns_fit_next_to_the_map(offline):
+    # Every view's table fits in the room next to the map (about 410 px in a 1536 px window).
+    at = _run_app("Grid")
+    for i in range(6):
+        at.sidebar.selectbox(key="view").set_value(i).run()
+        assert not at.exception
+        widths = _weakest_widths(at)
+        assert all(isinstance(w, int) for w in widths.values())
+        assert sum(widths.values()) <= 340, (i, widths)
+    assert _weakest_widths(at)["Score"] < 100
 
 
 # --- Drawing an area (build step 9) -----------------------------------------------

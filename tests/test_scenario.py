@@ -6,8 +6,8 @@ from tests.conftest import grid_xy
 from walkscope import pipeline
 from walkscope.config import load_indicator_params
 from walkscope.config import load_personas
-from walkscope.scenario import (AMENITY, CROSSING, Edit, ScenarioError, apply_edits, check_edit, edit_outcome,
-                                item_noun)
+from walkscope.scenario import (AMENITY, CROSSING, Edit, ScenarioError, apply_edits, changed_streets, check_edit,
+                                edit_outcome, effect_note, item_noun)
 
 PARAMS = load_indicator_params()
 
@@ -132,10 +132,46 @@ def test_outcome_explains_a_map_that_does_not_count_the_item(net):
     out = edit_outcome(net, [], Edit(CROSSING, *grid_xy(0.3, 1)), GENERAL, "traffic_stress", "Traffic stress",
                        PARAMS)
     assert out.improved == 0
-    assert "raised pedestrian infrastructure on 1 segment, but the map shows traffic stress" in out.message
-    assert 'Switch "Map shows" to Walkability score or Pedestrian infrastructure' in out.message
+    assert out.message.endswith("raised pedestrian infrastructure on 1 segment, but the map shows traffic "
+                                "stress, which doesn't count it.")
 
 
 def test_outcome_refuses_like_check_edit(net):
     with pytest.raises(ScenarioError, match="needs a road within 50 m"):
         edit_outcome(net, [], Edit(CROSSING, *grid_xy(5, 5)), GENERAL, "score", "Walkability score", PARAMS)
+
+
+# --- How big the effect of one item can be ---------------------------------------------
+
+def test_effect_note_for_an_amenity():
+    note = effect_note(AMENITY, "groceries", GENERAL, "score", PARAMS)
+    assert note.text == ("A grocery shop covers 1 of 6 amenity categories (amenity access is 30% of the general "
+                         "adult persona's walkability score). Switch Map shows to Amenity access to see the full "
+                         "effect.")
+    assert note.switch_to == "amenity"
+    shown = effect_note(AMENITY, "groceries", GENERAL, "amenity", PARAMS)
+    assert shown.switch_to is None and "Switch" not in shown.text
+
+
+def test_effect_note_for_a_crossing_uses_the_persona_mix():
+    note = effect_note(CROSSING, None, GENERAL, "traffic_stress", PARAMS)
+    assert note.text.startswith("A marked crossing counts only for roads within 50 m, as 40% of their pedestrian "
+                                "infrastructure (pedestrian infrastructure is 20% of the general adult persona's")
+    assert note.switch_to == "infrastructure"
+    wheelchair = load_personas()["wheelchair"]                     # base is 50% of its infrastructure mix
+    assert "as 20% of their pedestrian infrastructure" in effect_note(CROSSING, None, wheelchair, "score",
+                                                                       PARAMS).text
+
+
+# --- Before, after and change agree as shown ------------------------------------------
+
+def test_changed_streets_change_is_the_difference_of_the_rounded_values():
+    import pandas as pd
+    before = pd.DataFrame({"name": ["Pieperweg", "Pieperweg", "Other"], "length": [100.0, 100.0, 100.0],
+                           "scored": True, "score": [57.6, 58.2, 40.0]})      # Pieperweg 57.9 -> 58
+    after = before.assign(score=[58.4, 58.8, 40.4])                          # Pieperweg 58.6 -> 59; Other 40
+    rows = changed_streets(before, after, before.index, "score").to_dict("records")
+    assert rows == [{"Street": "Pieperweg", "Before": 58, "After": 59, "Change": 1}]   # Other: 40 -> 40, left out
+
+    after = before.assign(score=[57.9, 58.3, 40.0])                          # 58.1: still 58 -> no change shown
+    assert changed_streets(before, after, before.index, "score").empty

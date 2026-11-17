@@ -37,7 +37,7 @@ from walkscope.mapview import colour_range, legend_html, make_map
 from walkscope.network import Network
 from walkscope.report import build_report, rounded_change, to_markdown, to_pdf
 from walkscope.scenario import (AMENITY, CROSSING, Edit, ScenarioError, apply_edits, changed_streets, edit_outcome,
-                                item_noun)
+                                effect_note, item_noun)
 from walkscope.scoring import (INDICATOR_LABELS, STREET_DESIGN, apply_persona, area_summary, display_name,
                                length_weighted_mean, weakest, weakest_indicator)
 from walkscope.tags import is_pedestrian_only
@@ -54,7 +54,7 @@ EXAMPLES: dict[str, str | tuple[str, BaseGeometry]] = {
 }
 MAP_HEIGHT = 650
 PAGE_MAX_WIDTH_PX = 1300
-MAP_SHARE = 0.6                 # map column's share of the page width; the table gets the rest
+MAP_SHARE = 0.55                # map column's share of the page width; the table gets the rest
 PAGE_CSS = (f"<style>.block-container, [data-testid='stMainBlockContainer']"
             f"{{max-width:{PAGE_MAX_WIDTH_PX}px;}}</style>")
 COLOUR_SCALES = {"relative": "Relative to this area", "absolute": "Absolute (0–100)"}
@@ -65,6 +65,14 @@ CHANGED_ROWS = 10
 AREA_MODES = {"place": "Place name", "draw": "Draw on map"}
 DRAWN_KEY = "drawn_areas"       # session state: drawn-area name -> outline (WKT, lat/lon)
 WEAKEST_ROWS = 15
+# Width (px) the weakest-streets table's columns are sized to (column_widths), not counting the
+# row-selection column. Small enough to fit next to the map in a 1280 px wide window; in wider
+# windows the table stretches its columns to fill the room (about 430 px at 1536 px).
+TABLE_WIDTH_PX = 340
+CHAR_PX = 6.6                   # average character width of the table font (14 px Source Sans)
+CELL_PAD_PX = 18                # cell padding left and right, plus a little room
+MIN_COLUMN_PX = 80              # a column given up for room still shows this much
+TABLE_HEADERS = {"Weakest indicator": "Weakest"}     # shorter headers for the narrow table
 CACHED_PLACES = 5
 BUSY_HINT = ("The public OpenStreetMap server is probably overloaded. Try this area again later, or open "
              "one of the example areas in the sidebar: they don't need the server and open in seconds.")
@@ -185,6 +193,15 @@ INDICATOR_SHORT = {
 }
 
 
+# Indicator names in the weakest-streets table, short so the columns fit next to the map.
+INDICATOR_TABLE = {k: v.capitalize() for k, v in INDICATOR_SHORT.items()}
+
+
+def table_weakest(seg: pd.DataFrame, columns=tuple(INDICATOR_LABELS)) -> pd.Series:
+    """weakest_indicator with short names, e.g. 'Traffic 11', for the table."""
+    return weakest_indicator(seg, columns, labels=INDICATOR_TABLE, impassable="Impassable (steps)")
+
+
 def _indicator_line(column: str) -> Callable[[pd.DataFrame], pd.Series]:
     return lambda seg: seg[column].round().astype(int).astype(str)
 
@@ -202,7 +219,7 @@ VIEWS = [
     View("score", "Walkability score",
          popup={**{label: _indicator_line(col) for col, label in INDICATOR_LABELS.items()},
                 "Weakest": weakest_indicator},
-         table={"Weakest indicator": weakest_indicator}),
+         table={"Weakest indicator": table_weakest}),
     View("traffic_stress", "Traffic stress",
          popup={"Speed limit": speed_popup},
          table={"Speed used": speed_used, "Source": speed_source}),
@@ -465,7 +482,7 @@ def weakest_table(seg: pd.DataFrame, view: View, design_only: bool = False) -> p
     indicator is the weaker of those two.
     """
     column = "street_design" if design_only else view.column
-    extras = {"Weakest indicator": lambda rows: weakest_indicator(rows, STREET_DESIGN)} if design_only \
+    extras = {"Weakest indicator": lambda rows: table_weakest(rows, STREET_DESIGN)} if design_only \
         else view.table
     table = weakest(seg, column, n=WEAKEST_ROWS)
     rows = seg.loc[table["segment_id"]]
@@ -530,12 +547,40 @@ def render_weakest(key: str, view: View, table: pd.DataFrame, design_only: bool)
         selection_mode="single-row",
         key=key,
         column_config={
-            "Street": st.column_config.TextColumn(width="medium"),
-            "Score": st.column_config.NumberColumn(format="%d", width="small"),
-            "Weakest indicator": st.column_config.TextColumn(width="medium"),
-            "Road type": st.column_config.TextColumn(width="small"),
+            name: (st.column_config.NumberColumn(format="%d", width=px) if name == "Score"
+                   else st.column_config.TextColumn(TABLE_HEADERS.get(name), width=px))
+            for name, px in column_widths(table).items()
         },
     )
+
+
+def column_widths(table: pd.DataFrame, budget: int = TABLE_WIDTH_PX) -> dict[str, int]:
+    """Pixel width per column so the table fits next to the map without scrolling sideways.
+
+    Each column gets the width of its longest text (header or cell). If they don't fit in `budget`,
+    columns give up width (down to MIN_COLUMN_PX) in this order: Road type, the view's own columns
+    from the last, then Street; their longest texts end in "…". If that is not enough (views with
+    many columns), all text columns shrink in proportion. Score keeps its width. The table
+    stretches to fill any extra room.
+    """
+    widths = {}
+    for name in table.columns:
+        longest = max([len(TABLE_HEADERS.get(name, str(name))), *table[name].astype(str).str.len()])
+        widths[name] = round(CELL_PAD_PX + CHAR_PX * longest)
+    over = sum(widths.values()) - budget
+    extras = [c for c in reversed(table.columns) if c not in ("Street", "Score", "Road type")]
+    for name in ["Road type", *extras, "Street"]:
+        if over <= 0:
+            break
+        if name in widths:
+            give = max(0, min(over, widths[name] - MIN_COLUMN_PX))
+            widths[name] -= give
+            over -= give
+    if over > 0:        # many columns: all text columns shrink in proportion
+        fixed = widths.get("Score", 0)
+        scale = (budget - fixed) / (sum(widths.values()) - fixed)
+        widths = {name: px if name == "Score" else int(px * scale) for name, px in widths.items()}
+    return widths
 
 
 # --- Drawing an area -----------------------------------------------------------------
@@ -605,14 +650,15 @@ def handle_click(net: Network, place: str, edits: list[Edit], mode: str, click: 
         return True
     st.session_state.pop("whatif_error", None)
     st.session_state["whatif_result"] = (outcome.improved > 0, outcome.message)
+    st.session_state["whatif_last"] = (edit.kind, edit.category)     # for the effect note
     st.session_state["whatif_show_after"] = True        # applied before the Before/After control is drawn
     edits.append(edit)
     return True
 
 
 def _clear_whatif_messages() -> None:
-    st.session_state.pop("whatif_error", None)
-    st.session_state.pop("whatif_result", None)
+    for key in ("whatif_error", "whatif_result", "whatif_last"):
+        st.session_state.pop(key, None)
 
 
 def undo_edit(place: str) -> None:
@@ -633,8 +679,14 @@ def cancel_adding() -> None:
     st.session_state.pop("whatif_error", None)
 
 
-def show_whatif_status(mode: str | None) -> None:
-    """Right above the map: the last placement's result or why it failed, and the add-mode banner."""
+def show_view(column: str) -> None:
+    """Switch "Map shows" to the view of `column` (button next to the effect note)."""
+    st.session_state["view"] = next(i for i, v in enumerate(VIEWS) if v.column == column)
+
+
+def show_whatif_status(mode: str | None, persona: Persona, view: View) -> None:
+    """Right above the map: the last placement's result or why it failed, how big the effect of one
+    item can be (with a button to show the indicator it changes), and the add-mode banner."""
     if error := st.session_state.get("whatif_error"):
         st.error(error, icon=":material/wrong_location:")
     elif result := st.session_state.get("whatif_result"):
@@ -643,10 +695,16 @@ def show_whatif_status(mode: str | None) -> None:
             st.success(message, icon=":material/check_circle:")
         else:
             st.warning(message, icon=":material/info:")
+        if last := st.session_state.get("whatif_last"):
+            note = effect_note(*last, persona, view.column, _params())
+            st.caption(note.text)
+            if note.switch_to is not None:
+                st.button(f"Show {INDICATOR_LABELS[note.switch_to]}", key="whatif_switch_view",
+                          icon=":material/swap_horiz:", on_click=show_view, args=(note.switch_to,))
     if mode is None:
         return
     noun = item_noun(mode, st.session_state.get("whatif_category"))
-    banner, cancel = st.columns([5, 1], vertical_alignment="center")
+    banner, cancel = st.columns([3, 1], vertical_alignment="center")
     with banner:
         st.info(f"**Click on the map to place a {noun}.** Drag to move the map; each click adds one.",
                 icon=":material/add_location_alt:")
@@ -816,7 +874,7 @@ def main() -> None:
         key = table_key(place, view, persona, design_only) + f"|{shown}|{len(edits)}"
         table = weakest_table(seg, view, design_only)
     with map_col:
-        show_whatif_status(mode)
+        show_whatif_status(mode, persona, view)
         click = render_map(seg, net.area, view, selected_street(key, table), colours, relative,
                            edits, clickable=mode is not None)
     with table_col:
