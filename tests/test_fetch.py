@@ -238,6 +238,31 @@ def test_fetch_area_downloads_once_then_uses_cache(monkeypatch, tmp_path, grid_g
     assert len(calls) == 2
 
 
+def test_damaged_cache_file_is_downloaded_again(monkeypatch, tmp_path, grid_graph, grid_area, raw_features,
+                                                params):
+    # E.g. a server restart while the file was written by an older version.
+    calls = []
+    monkeypatch.setattr(fetch, "_download", lambda b, t, p=None: calls.append(1) or (grid_graph, raw_features))
+    (tmp_path / f"area_{fetch.cache_key(grid_area, params)}.pkl").write_bytes(b"not a pickle")
+    data = fetch.fetch_area(grid_area, params, cache_dir=tmp_path)
+    assert len(calls) == 1 and data.graph.number_of_edges() > 0
+    fetch.fetch_area(grid_area, params, cache_dir=tmp_path)       # the rewritten file is used
+    assert len(calls) == 1
+
+
+def test_a_cache_that_cannot_be_written_only_costs_the_speed_up(monkeypatch, tmp_path, grid_graph, grid_area,
+                                                                raw_features, params):
+    calls = []
+    monkeypatch.setattr(fetch, "_download", lambda b, t, p=None: calls.append(1) or (grid_graph, raw_features))
+    blocked = tmp_path / "file"
+    blocked.write_text("a file where the cache directory should be")
+    data = fetch.fetch_area(grid_area, params, cache_dir=blocked / "cache")
+    assert data.graph.number_of_edges() > 0
+    fetch.fetch_area(grid_area, params, cache_dir=blocked / "cache")
+    assert len(calls) == 2                                          # nothing cached, no error
+    assert not list(tmp_path.glob("**/*.tmp"))
+
+
 def test_simplify_with_way_parts_keeps_each_ways_speed_and_length():
     import networkx as nx
     # e - a - b - c - d - f: one street between two dead ends, made of OSM

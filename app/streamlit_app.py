@@ -11,6 +11,7 @@ a View to VIEWS. The selected persona is applied once per run
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 import traceback
@@ -18,6 +19,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as StillRunning
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
 import geopandas as gpd
@@ -27,7 +29,11 @@ from shapely import wkt
 from shapely.geometry.base import BaseGeometry
 from streamlit_folium import st_folium
 
-from walkscope import pipeline
+# The repository holds config/ and data/examples/. Point the package at it, also when it is
+# installed normally (pip install ., as on Streamlit Community Cloud) rather than editable.
+os.environ.setdefault("WALKSCOPE_HOME", str(Path(__file__).resolve().parents[1]))
+
+from walkscope import pipeline  # noqa: E402 - after WALKSCOPE_HOME is set
 from walkscope.completeness import Completeness, caution_message, completeness
 from walkscope.config import Persona, load_indicator_params, load_personas
 from walkscope.drawing import draw_map, drawn_area_name, polygon_from_drawings

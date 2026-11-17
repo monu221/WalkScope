@@ -77,6 +77,13 @@ pytest
 
 The tests that call the real Nominatim and Overpass APIs are skipped by default; run them with `pytest -m live`.
 
+## Deploy on Streamlit Community Cloud
+
+- **Main file path:** `app/streamlit_app.py`
+- **Python version:** 3.12, chosen under *Advanced settings* when deploying (Community Cloud has no file for this; 3.12 is its default).
+- **Dependencies:** `requirements.txt` installs the package (`.`) with the library versions the bundled examples were saved with.
+- **Cache:** downloads are cached in `data/cache/`, or in the temp directory if that can't be written to (set `WALKSCOPE_CACHE_DIR` to choose another). The disk is temporary, so the cache may be empty after a restart and new areas are downloaded again. The example areas always load from `data/examples/` without any server call.
+
 ## Licences
 
 - **Code:** MIT, see [LICENSE](LICENSE).

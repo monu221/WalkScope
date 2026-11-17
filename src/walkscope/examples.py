@@ -26,6 +26,8 @@ from shapely import wkt
 from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
 
+from walkscope import paths
+
 log = logging.getLogger(__name__)
 
 # Aachen's districts are larger than 5 km² or don't resolve to an area, so the
@@ -48,7 +50,8 @@ BUNDLED: dict[str, str | tuple[str, BaseGeometry]] = {
 # (scripts/measure_timing.py and scripts/refresh_examples.py).
 use_bundle = True
 
-EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "data" / "examples"
+# data/examples in the project directory (see paths.py); found after a regular install too.
+EXAMPLES_DIR = paths.EXAMPLES_DIR
 INDEX_FILE = "index.json"
 
 

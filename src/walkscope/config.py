@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
+from walkscope.paths import CONFIG_DIR
 
 INDICATORS = ("amenity", "connectivity", "infrastructure", "traffic_stress", "transit")
 INFRASTRUCTURE_PARTS = ("base", "kerb", "surface", "lit")

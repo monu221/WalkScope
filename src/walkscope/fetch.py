@@ -27,7 +27,7 @@ import truststore
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 
-from walkscope import examples
+from walkscope import examples, paths
 from walkscope.config import load_indicator_params
 
 # Verify HTTPS against the operating system's certificate store instead of
@@ -36,7 +36,9 @@ from walkscope.config import load_indicator_params
 # trusts but certifi does not.
 truststore.inject_into_ssl()
 
-CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
+# data/cache in the project, or the temp directory if that can't be written (paths.cache_dir).
+# Only a speed-up: it may be empty after a restart on a server with a temporary disk.
+CACHE_DIR = paths.cache_dir()
 # Bump when the cached content or its shape changes, so old cache files are ignored.
 # (Re-classifying needs no new download: OSMnx's HTTP cache still has the responses.)
 CACHE_VERSION = 4
@@ -486,18 +488,40 @@ def fetch_area(
         return bundled
 
     path = cache_dir / f"area_{key}.pkl"
-    if path.exists():
-        with open(path, "rb") as f:
-            return pickle.load(f)  # our own file, written below
+    cached = _load_cached(path)
+    if cached is not None:
+        return cached
 
     buffered = buffer_area(area, buffer_m)
     graph, features = _download(buffered, tags, progress)
     pois, stops, street_points = classify_features(features, params)
     data = AreaData(area, buffered, graph, pois, stops, street_points)
-
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    with open(tmp, "wb") as f:
-        pickle.dump(data, f)
-    tmp.replace(path)
+    _save_cached(path, data)
     return data
+
+
+def _load_cached(path: Path) -> AreaData | None:
+    """The cached download, or None if there is none or it can't be read (then it is removed)."""
+    if not path.exists():
+        return None
+    try:
+        with open(path, "rb") as f:
+            return pickle.load(f)  # our own file, written by _save_cached
+    except Exception as e:  # noqa: BLE001 - a damaged or outdated file means "download again"
+        log.warning("Ignoring unreadable cache file %s: %s", path, e)
+        path.unlink(missing_ok=True)
+        return None
+
+
+def _save_cached(path: Path, data: AreaData) -> None:
+    """Write the download to the cache. Written to a temporary file first, so a restart mid-write
+    leaves no half-written cache file. A failure (full or read-only disk) only costs the speed-up."""
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "wb") as f:
+            pickle.dump(data, f)
+        tmp.replace(path)
+    except OSError as e:
+        log.warning("Could not cache the download in %s: %s", path, e)
+        tmp.unlink(missing_ok=True)
