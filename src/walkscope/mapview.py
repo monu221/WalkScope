@@ -139,7 +139,8 @@ def make_map(
             interactive=False,
         ).add_to(m)
 
-    selected = set(highlight or ())
+    # Not `highlight or ()`: the app passes a pandas Index, whose truth value is ambiguous.
+    selected = set(highlight) if highlight is not None else set()
     if selected:
         # Drawn under the score layer, wider, so it shows as a dark outline around the street.
         folium.GeoJson(

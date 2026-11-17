@@ -78,6 +78,21 @@ def test_highlight_outlines_selected_segments_under_the_scores(segs):
     assert len(geojson_layers(make_map(segs, "traffic_stress", "Traffic stress"))) == 1
 
 
+@pytest.mark.parametrize("highlight", [pd.Index([7]), pd.Index([7], name="segment_id"), [7], (7,), {7}])
+def test_highlight_accepts_a_pandas_index(segs, highlight):
+    # The app passes seg.index[...] (a pandas Index); `highlight or ()` raised
+    # "The truth value of a Index is ambiguous".
+    layers = geojson_layers(make_map(segs, "traffic_stress", "Traffic stress", highlight=highlight))
+    assert [l.layer_name for l in layers] == ["Selected street", "Traffic stress"]
+    assert [f["properties"]["segment_id"] for f in layers[0].data["features"]] == [7]
+
+
+@pytest.mark.parametrize("highlight", [None, [], pd.Index([], dtype="int64")])
+def test_no_or_empty_highlight_draws_no_outline(segs, highlight):
+    layers = geojson_layers(make_map(segs, "traffic_stress", "Traffic stress", highlight=highlight))
+    assert [l.layer_name for l in layers] == ["Traffic stress"]
+
+
 def test_legend_html():
     html = legend_html("Traffic stress")
     assert "Traffic stress: 0 = worst, 100 = best" in html

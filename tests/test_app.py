@@ -309,6 +309,27 @@ def test_app_colour_scale_defaults_to_relative(offline):
     assert not at.exception
 
 
+def _select_table_row(at, row):
+    """Select a row of the weakest-streets table, as a click on it does."""
+    from streamlit.typing import DataframeState
+    at.session_state[at.dataframe[0].key] = DataframeState(
+        {"selection": {"rows": [row], "columns": [], "cells": []}})
+    return at.run()
+
+
+def test_app_selecting_a_table_row_outlines_the_street(offline):
+    # Reported crash: Night-time persona, walkability view, absolute colours,
+    # then a click on a row of the weakest-streets table. The app passes the
+    # street's segments to make_map as a pandas Index.
+    at = _run_app("Grid")
+    at.sidebar.selectbox(key="persona").set_value("night").run()
+    at.sidebar.radio(key="colour_scale").set_value("absolute").run()
+    assert at.sidebar.selectbox(key="view").value == 0              # Walkability score
+    _select_table_row(at, 0)
+    assert not at.exception
+    assert at.subheader[0].value == "Grid · Night-time"
+
+
 def test_app_cautions_when_persona_data_is_sparse(offline):
     # The grid has no sidewalk, surface or lighting tags and one kerb point.
     at = _run_app("Grid")
