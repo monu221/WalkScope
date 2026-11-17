@@ -9,9 +9,10 @@ import numpy as np
 
 import branca.colormap as cm
 import folium
-from branca.element import Element
+from branca.element import Element, MacroElement
 import geopandas as gpd
 import pandas as pd
+from jinja2 import Template
 from shapely.geometry.base import BaseGeometry
 
 from walkscope.scoring import display_name, road_type
@@ -30,8 +31,52 @@ GREY_TILES_CSS = (
 )
 
 HIGHLIGHT_COLOR = "#111111"
-# Added what-if items: kind -> (border colour, fill colour).
-MARKER_STYLES = {"crossing": ("#111111", "#ffffff"), "amenity": ("#111111", "#7b3294")}
+# Added what-if items: icon key (CROSSING or the amenity category) -> symbol drawn in a white disc.
+MARKER_ICONS = {
+    "crossing": "🚸", "groceries": "🛒", "school": "🏫", "pharmacy": "💊",
+    "park": "🌳", "cafe": "☕", "doctor": "🩺",
+}
+DEFAULT_MARKER_ICON = "📍"
+MARKER_SIZE_PX = 30
+MARKER_HTML = (
+    '<div style="width:{size}px;height:{size}px;border-radius:50%;background:#fff;'
+    'border:2px solid #111;box-shadow:0 1px 4px rgba(0,0,0,.45);display:flex;align-items:center;'
+    'justify-content:center;font-size:{font}px;line-height:1;">{icon}</div>'
+)
+
+# While the what-if add mode is on: a crosshair over the map and the streets, so it is clear that
+# a click places something. Leaflet still pans on drag (a click is only fired when the pointer
+# hardly moved), and while dragging the "grabbing" hand comes back.
+ADD_MODE_CSS = (
+    "<style>"
+    ".leaflet-container.leaflet-grab, .leaflet-container .leaflet-interactive{cursor:crosshair;}"
+    ".leaflet-dragging .leaflet-container.leaflet-grab,"
+    ".leaflet-dragging .leaflet-container .leaflet-interactive{cursor:grabbing;}"
+    "</style>"
+)
+
+
+class EscapeToPage(MacroElement):
+    """Pass the Esc key from the map to the page around it.
+
+    streamlit-folium draws the map in an iframe, so after a click on the map
+    the page's keyboard shortcuts (st.button(shortcut="Esc")) don't see Esc.
+    The iframe is same-origin; Streamlit listens for keydown and keyup on the
+    page's document, so both are passed on. Runs as part of the map script
+    (header and body HTML are inserted with innerHTML, where scripts don't run).
+    """
+
+    _template = Template("""{% macro script(this, kwargs) %}
+        document.addEventListener("keydown", function (e) {
+            if (e.key !== "Escape" || e.repeat) { return; }
+            try {
+                var page = window.parent.document;
+                ["keydown", "keyup"].forEach(function (type) {
+                    page.dispatchEvent(new KeyboardEvent(type, {key: "Escape", code: "Escape", bubbles: true}));
+                });
+            } catch (err) {}
+        });
+    {% endmacro %}""")
 
 
 # "Relative" colour scale: stretch the colours over this percentile range of the
@@ -98,6 +143,7 @@ def make_map(
     vmin: float = 0,
     vmax: float = 100,
     markers: Iterable[tuple[float, float, str, str]] = (),
+    adding: bool = False,
 ) -> folium.Map:
     """Map of scored segments coloured by `column`, with the study-area outline.
 
@@ -105,9 +151,12 @@ def make_map(
     name, road type, score and the `details` (label -> per-segment text,
     indexed like `segments`). Segments whose id is in `highlight` get a dark
     outline. Colours run from red at `vmin` to blue at `vmax` (see
-    colour_range). `markers` are (lat, lon, kind, tooltip) of added what-if
-    items, drawn on top. The map is framed on the study area (or the segments
-    without one). The legend is not drawn on the map; show `legend_html`.
+    colour_range). `markers` are (lat, lon, icon, tooltip) of added what-if
+    items, drawn on top; `icon` is a MARKER_ICONS key (CROSSING or the amenity
+    category). With `adding` (what-if add mode) the pointer is a crosshair and
+    clicking a street opens no popup, so the click only places the item. The
+    map is framed on the study area (or the segments without one). The legend
+    is not drawn on the map; show `legend_html`.
     """
     seg = segments[segments["scored"]]
     details = dict(details or {})
@@ -130,6 +179,9 @@ def make_map(
     m = folium.Map(location=centre, zoom_start=zoom, zoom_snap=0.25, tiles=BASEMAP, control_scale=True)
     m.fit_bounds([[miny, minx], [maxy, maxx]], padding=(12, 12))
     m.get_root().header.add_child(Element(GREY_TILES_CSS))
+    if adding:
+        m.get_root().header.add_child(Element(ADD_MODE_CSS))
+        EscapeToPage().add_to(m)
 
     if outline is not None:
         folium.GeoJson(
@@ -158,17 +210,23 @@ def make_map(
         style_function=lambda f: {"color": cmap(f["properties"]["score"]), "weight": 4, "opacity": 0.95},
         highlight_function=lambda _: {"weight": 8},
         tooltip=folium.GeoJsonTooltip(fields=["street", "score"], aliases=["Street", label]),
-        popup=folium.GeoJsonPopup(
+        popup=None if adding else folium.GeoJsonPopup(
             fields=["street", "type", "score", *detail_fields],
             aliases=["Street", "Road type", label, *detail_fields],
         ),
     ).add_to(m)
 
-    for lat, lon, kind, tip in markers:
-        border, fill = MARKER_STYLES[kind]
-        folium.CircleMarker([lat, lon], radius=8, color=border, weight=2, fill=True, fill_color=fill,
-                            fill_opacity=1, tooltip=tip).add_to(m)
+    for lat, lon, icon, tip in markers:
+        folium.Marker([lat, lon], icon=marker_icon(icon), tooltip=tip).add_to(m)
     return m
+
+
+def marker_icon(icon: str) -> folium.DivIcon:
+    """Marker for an added what-if item: its symbol (MARKER_ICONS) in a white disc, centred on the point."""
+    size = MARKER_SIZE_PX
+    html = MARKER_HTML.format(size=size, font=round(size * 0.55), icon=MARKER_ICONS.get(icon, DEFAULT_MARKER_ICON))
+    return folium.DivIcon(html=html, icon_size=(size, size), icon_anchor=(size // 2, size // 2),
+                          class_name="walkscope-marker")
 
 
 def legend_html(label: str, vmin: float = 0, vmax: float = 100, relative: bool = False) -> str:

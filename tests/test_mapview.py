@@ -140,7 +140,40 @@ def test_map_is_framed_on_the_study_area(segs):
 def test_markers_for_added_items(segs):
     m = make_map(segs, "traffic_stress", "Traffic stress",
                  markers=[(53.55, 9.97, "crossing", "Added: Marked crossing"),
-                          (53.56, 9.98, "amenity", "Added: Amenity: school")])
-    circles = [c for c in m._children.values() if isinstance(c, folium.CircleMarker)]
-    assert [c.location for c in circles] == [[53.55, 9.97], [53.56, 9.98]]
+                          (53.56, 9.98, "school", "Added: Amenity: school"),
+                          (53.57, 9.99, "library", "Added: Amenity: library")])
+    markers = [c for c in m._children.values() if isinstance(c, folium.Marker)]
+    assert [c.location for c in markers] == [[53.55, 9.97], [53.56, 9.98], [53.57, 9.99]]
+    icons = [next(i for i in c._children.values() if isinstance(i, folium.DivIcon)) for c in markers]
+    assert ["🚸" in i.options["html"] for i in icons] == [True, False, False]
+    assert "🏫" in icons[1].options["html"]
+    assert "📍" in icons[2].options["html"]                     # unknown type: a plain pin
+    assert icons[0].options["icon_anchor"] == (15, 15)         # centred on the clicked point
     assert "Added: Amenity: school" in m.get_root().render()
+
+
+def _leaflet_script(m):
+    """The map script streamlit-folium runs in its iframe (header and body HTML are set with innerHTML)."""
+    from streamlit_folium import _get_map_string
+    m.get_root().render()
+    return _get_map_string(m)
+
+
+def test_add_mode_shows_a_crosshair_and_keeps_dragging(segs):
+    m = make_map(segs, "traffic_stress", "Traffic stress", adding=True)
+    header = m.get_root().header.render()
+    assert ".leaflet-container.leaflet-grab, .leaflet-container .leaflet-interactive{cursor:crosshair;}" in header
+    assert ".leaflet-dragging .leaflet-container.leaflet-grab" in header       # grabbing hand while dragging
+    assert m.options.get("dragging", True) is not False
+    layer = geojson_layers(m)[-1]
+    assert not any(isinstance(c, folium.GeoJsonPopup) for c in layer._children.values())   # a click only places
+    assert any(isinstance(c, folium.GeoJsonTooltip) for c in layer._children.values())
+    assert 'page.dispatchEvent(new KeyboardEvent(type, {key: "Escape"' in _leaflet_script(m)
+
+
+def test_explore_mode_has_the_normal_pointer_and_popups(segs):
+    m = make_map(segs, "traffic_stress", "Traffic stress")
+    assert "crosshair" not in m.get_root().header.render()
+    assert "KeyboardEvent" not in _leaflet_script(make_map(segs, "traffic_stress", "Traffic stress"))
+    layer = geojson_layers(m)[-1]
+    assert any(isinstance(c, folium.GeoJsonPopup) for c in layer._children.values())

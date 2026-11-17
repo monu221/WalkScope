@@ -359,7 +359,7 @@ def test_app_street_design_toggle(offline):
     assert table["Weakest indicator"].tolist() == ["Pedestrian infrastructure 30"] * 2 + ["Pedestrian infrastructure 70"]
 
     at.sidebar.selectbox(key="view").set_value(1).run()         # toggle only on the walkability view
-    assert len(at.button_group) == 0
+    assert not any(b.key == "table_focus" for b in at.button_group)
 
 
 
@@ -376,7 +376,7 @@ def test_app_whatif_crossing_before_and_after(offline):
     from walkscope.scenario import CROSSING, Edit
 
     at = _run_app("Grid")
-    assert at.radio(key="whatif_mode").value == "off"
+    assert at.button_group(key="whatif_mode").value is None    # exploring: nothing to add selected
     assert not any(m.label == "After" for m in at.metric)       # nothing added yet
 
     at.sidebar.selectbox(key="view").set_value(2).run()          # pedestrian infrastructure
@@ -406,7 +406,7 @@ def test_app_whatif_amenity_category(offline):
     from walkscope.scenario import AMENITY, Edit
 
     at = _run_app("Grid")
-    at.radio(key="whatif_mode").set_value("amenity").run()
+    at.button_group(key="whatif_mode").set_value("amenity").run()
     assert at.selectbox(key="whatif_category").options[:2] == ["Groceries", "School"]
     at.session_state["edits|Grid"] = [Edit(AMENITY, *grid_xy(0, 0), category="school")]
     at.run()
@@ -416,11 +416,63 @@ def test_app_whatif_amenity_category(offline):
     assert "Amenity: school" in " ".join(c.value for c in at.caption)
 
 
-def test_app_whatif_shows_placement_errors(offline):
+def test_app_whatif_shows_placement_errors_above_the_map(offline):
     at = _run_app("Grid")
     at.session_state["whatif_error"] = "A crossing needs a road within 50 m. Click on or next to a road."
     at.run()
     assert "needs a road" in at.error[0].value
+    assert not at.expander[0].error                           # not in the what-if panel, but next to the map
+    assert any(c.error for c in at.columns)
+
+
+def _banner(at):
+    return [i.value for i in at.info if "Click on the map" in i.value]
+
+
+def test_app_add_mode_banner_and_cancel(offline):
+    at = _run_app("Grid")
+    assert _banner(at) == []
+    assert not any(b.key == "whatif_cancel" for b in at.button)
+
+    at.button_group(key="whatif_mode").set_value("crossing").run()
+    assert not at.exception
+    assert _banner(at) == ["**Click on the map to place a marked crossing.** Drag to move the map; "
+                           "each click adds one."]
+    assert at.button_group(key="whatif_mode").value == "crossing"         # the active choice shows selected
+
+    at.button_group(key="whatif_mode").set_value("amenity").run()
+    at.selectbox(key="whatif_category").set_value("groceries").run()
+    assert "place a grocery shop" in _banner(at)[0]
+
+    at.button(key="whatif_cancel").click().run()
+    assert not at.exception
+    assert at.button_group(key="whatif_mode").value is None
+    assert _banner(at) == []
+
+
+def test_app_after_a_placement_shows_the_result_and_the_after_state(offline):
+    # Map clicks can't be made in AppTest; this is the state handle_click leaves.
+    from tests.conftest import grid_xy
+    from walkscope.scenario import CROSSING, Edit
+
+    at = _run_app("Grid")
+    at.session_state["edits|Grid"] = [Edit(CROSSING, *grid_xy(0.3, 1))]
+    at.run()
+    at.button_group(key="whatif_show").set_value("before").run()          # the user was looking at "before"
+    at.session_state["edits|Grid"] = [Edit(CROSSING, *grid_xy(0.3, 1)), Edit(CROSSING, *grid_xy(1.3, 2))]
+    at.session_state["whatif_result"] = (True, "Added a marked crossing: 1 street segment improved.")
+    at.session_state["whatif_show_after"] = True
+    at.run()
+    assert not at.exception
+    assert at.button_group(key="whatif_show").value == "after"
+    assert at.success[0].value == "Added a marked crossing: 1 street segment improved."
+
+    at.session_state["whatif_result"] = (False, "Added a marked crossing, but nothing improved: …")
+    at.run()
+    assert at.warning[-1].value == "Added a marked crossing, but nothing improved: …"
+
+    next(b for b in at.button if b.label == "Undo last").click().run()
+    assert not at.success and not any("nothing improved" in w.value for w in at.warning)
 
 
 # --- Drawing an area (build step 9) -----------------------------------------------

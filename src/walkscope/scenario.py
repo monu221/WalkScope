@@ -23,18 +23,27 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import Point
 
-from walkscope.config import load_personas
+from walkscope.config import Persona, load_personas
 from walkscope.indicators.amenity import amenity_score, category_scores, distance_column, score_column
 from walkscope.indicators.infrastructure import infrastructure_score, points_near
 from walkscope.network import Network, nearest_nodes, walk_distances
 from walkscope.pipeline import DEFAULT_PERSONA
-from walkscope.scoring import display_name, length_weighted_mean
+from walkscope.scoring import INDICATOR_LABELS, apply_persona, area_summary, display_name, length_weighted_mean
 from walkscope.tags import is_pedestrian_only
 
 CROSSING = "crossing"
 AMENITY = "amenity"
 # A clicked amenity must be at most this far from the walking network.
 MAX_SNAP_M = 100.0
+# What the user places, as a noun: CROSSING or the amenity category -> "a ..." in messages.
+ITEM_NOUNS = {
+    CROSSING: "marked crossing", "groceries": "grocery shop", "school": "school", "pharmacy": "pharmacy",
+    "park": "park", "cafe": "café", "doctor": "doctor's practice",
+}
+# The indicator each kind of edit changes.
+EDIT_INDICATOR = {CROSSING: "infrastructure", AMENITY: "amenity"}
+# A segment counts as improved when its score rose by more than this (the scores are shown rounded).
+IMPROVED_BY = 0.5
 
 
 class ScenarioError(ValueError):
@@ -143,6 +152,69 @@ def apply_edits(net: Network, edits: Iterable[Edit], params: dict[str, Any]) -> 
 def check_edit(net: Network, edits: list[Edit], edit: Edit, params: dict[str, Any]) -> None:
     """Raise ScenarioError if `edit` can't be placed (checked on a scratch copy)."""
     apply_edits(net, [*edits, edit], params)
+
+
+def item_noun(kind: str, category: str | None = None) -> str:
+    """'marked crossing', 'grocery shop', ... for messages like "Click on the map to place a ..."."""
+    key = kind if kind == CROSSING else category
+    return ITEM_NOUNS.get(key, f"{category or 'amenity'}")
+
+
+@dataclass(frozen=True)
+class EditOutcome:
+    improved: int           # scored segments whose `column` rose by more than IMPROVED_BY
+    streets: int            # named streets that improved, as listed by changed_streets
+    before_mean: float      # length-weighted mean of `column` over roads, without / with the edit
+    after_mean: float
+    message: str            # what to tell the user: the gain, or why there is none
+
+
+def edit_outcome(net: Network, edits: list[Edit], edit: Edit, persona: Persona, column: str,
+                 column_label: str, params: dict[str, Any]) -> EditOutcome:
+    """What adding `edit` after `edits` does to `column` for `persona`, with a message for the user.
+
+    Raises ScenarioError (as check_edit) if the edit can't be placed.
+    """
+    before = apply_persona(apply_edits(net, edits, params)[0], persona)
+    after = apply_persona(apply_edits(net, [*edits, edit], params)[0], persona)
+    scored = before["scored"].to_numpy()
+    gain = (after[column] - before[column])[scored]
+    improved = int((gain > IMPROVED_BY).sum())
+    ped = params["pedestrian_only_highways"]
+    b, a = area_summary(before, column, ped).road_mean, area_summary(after, column, ped).road_mean
+    noun = item_noun(edit.kind, edit.category)
+    streets = int((changed_streets(before, after, before.index, column, n=len(before))["Change"] > 0).sum())
+    if improved:
+        count, what = (streets, "street") if streets else (improved, "unnamed segment")
+        s = "" if count == 1 else "s"
+        message = (f"Added a {noun}: {count} {what}{s} improved. "
+                   f"Road average {column_label.lower()}: {b:.1f} to {a:.1f}.")
+    else:
+        message = f"Added a {noun}, but nothing improved: " + _why_no_gain(
+            before, after, scored, edit, noun, persona, column, column_label, params)
+    return EditOutcome(improved, streets, b, a, message)
+
+
+def _why_no_gain(before: pd.DataFrame, after: pd.DataFrame, scored: np.ndarray, edit: Edit, noun: str,
+                 persona: Persona, column: str, column_label: str, params: dict[str, Any]) -> str:
+    indicator = EDIT_INDICATOR[edit.kind]
+    ind_label = INDICATOR_LABELS[indicator]
+    touched = int(((after[indicator] - before[indicator]).abs() > 1e-9)[scored].sum())
+    if not touched:
+        if edit.kind == CROSSING:
+            radius = params["infrastructure"]["crossing"]["search_radius_m"]
+            return f"every road within {radius:g} m of this point already counts a marked crossing."
+        reach = params["amenity"]["zero_score_m"]
+        return f"no street within {reach:g} m on foot is closer to this point than to an existing {noun}."
+    s = "" if touched == 1 else "s"
+    if column not in (indicator, "score"):
+        return (f"it raised {ind_label.lower()} on {touched} segment{s}, but the map shows "
+                f"{column_label.lower()}, which doesn't count it. Switch \"Map shows\" to "
+                f"Walkability score or {ind_label} to see the change.")
+    if column == "score" and not persona.weights.get(indicator):
+        return f"{ind_label.lower()} has no weight for the {persona.label.lower()} persona."
+    return (f"it changed {ind_label.lower()} on {touched} segment{s}, but no {column_label.lower()} "
+            f"rose by more than {IMPROVED_BY:g} points.")
 
 
 CHANGE_COLUMNS = ["Street", "Before", "After", "Change"]

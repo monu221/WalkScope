@@ -5,7 +5,9 @@ import pytest
 from tests.conftest import grid_xy
 from walkscope import pipeline
 from walkscope.config import load_indicator_params
-from walkscope.scenario import AMENITY, CROSSING, Edit, ScenarioError, apply_edits, check_edit
+from walkscope.config import load_personas
+from walkscope.scenario import (AMENITY, CROSSING, Edit, ScenarioError, apply_edits, check_edit, edit_outcome,
+                                item_noun)
 
 PARAMS = load_indicator_params()
 
@@ -85,3 +87,55 @@ def test_edits_apply_in_order_and_check_edit(net):
 def test_edit_labels():
     assert Edit(CROSSING, 0, 0).label() == "Marked crossing"
     assert Edit(AMENITY, 0, 0, "school").label() == "Amenity: school"
+
+
+# --- What one placement did (the message after a click on the map) -------------------
+
+GENERAL = load_personas()["general_adult"]
+
+
+def test_item_noun():
+    assert item_noun(CROSSING) == "marked crossing"
+    assert item_noun(AMENITY, "groceries") == "grocery shop"
+    assert item_noun(AMENITY, "doctor") == "doctor's practice"
+    assert item_noun(AMENITY, "library") == "library"             # unknown category: its own name
+
+
+def test_outcome_counts_improved_segments_and_road_average(net):
+    out = edit_outcome(net, [], Edit(CROSSING, *grid_xy(0.3, 1)), GENERAL, "infrastructure",
+                       "Pedestrian infrastructure", PARAMS)
+    # Roads: 3 x 100 m at 30, 30, 70 -> 43.3; the crossing lifts Row 1 Street from 30 to 70 -> 56.7.
+    assert out.improved == 1 and out.streets == 1
+    assert (round(out.before_mean, 1), round(out.after_mean, 1)) == (43.3, 56.7)
+    assert out.message == ("Added a marked crossing: 1 street improved. "
+                           "Road average pedestrian infrastructure: 43.3 to 56.7.")
+
+
+def test_outcome_is_relative_to_the_items_already_added(net):
+    first = Edit(AMENITY, *grid_xy(0, 0), category="school")
+    out = edit_outcome(net, [first], Edit(AMENITY, *grid_xy(0, 0), category="school"), GENERAL, "score",
+                       "Walkability score", PARAMS)
+    assert out.improved == 0 and out.before_mean == out.after_mean
+    assert out.message == ("Added a school, but nothing improved: no street within 800 m on foot is closer "
+                           "to this point than to an existing school.")
+
+
+def test_outcome_explains_a_crossing_where_one_is_already_marked(net):
+    out = edit_outcome(net, [], Edit(CROSSING, *grid_xy(0.5, 0.02)), GENERAL, "score", "Walkability score",
+                       PARAMS)
+    assert out.improved == 0
+    assert out.message.endswith("nothing improved: every road within 50 m of this point already counts "
+                                "a marked crossing.")
+
+
+def test_outcome_explains_a_map_that_does_not_count_the_item(net):
+    out = edit_outcome(net, [], Edit(CROSSING, *grid_xy(0.3, 1)), GENERAL, "traffic_stress", "Traffic stress",
+                       PARAMS)
+    assert out.improved == 0
+    assert "raised pedestrian infrastructure on 1 segment, but the map shows traffic stress" in out.message
+    assert 'Switch "Map shows" to Walkability score or Pedestrian infrastructure' in out.message
+
+
+def test_outcome_refuses_like_check_edit(net):
+    with pytest.raises(ScenarioError, match="needs a road within 50 m"):
+        edit_outcome(net, [], Edit(CROSSING, *grid_xy(5, 5)), GENERAL, "score", "Walkability score", PARAMS)
